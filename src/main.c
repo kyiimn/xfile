@@ -279,6 +279,11 @@ int main(int argc, char **argv)
 	/* non XRDB arguments */
 	if(argc > 1) {
 		open_spec = realpath(argv[1], NULL);
+		if(!open_spec || access(open_spec, R_OK|X_OK)) {
+			stderr_msg("Error opening directory \'%s\' %s.\n",
+				argv[1], strerror(errno));
+			return EXIT_FAILURE;
+		}
 		if(argc > 2) stderr_msg(
 			"Ignoring %d redundant argument(s)\n", argc - 2);
 	}
@@ -288,7 +293,7 @@ int main(int argc, char **argv)
 
 		open_spec = realpath(def_path, NULL);
 		if(!open_spec) {
-			stderr_msg("Error opening directory \'%s\' %s\n",
+			stderr_msg("Error opening directory \'%s\' %s.\n",
 				def_path, strerror(errno));
 			return EXIT_FAILURE;
 		}
@@ -303,7 +308,7 @@ int main(int argc, char **argv)
 		if(!rv) {
 			app_res.media_dir = exp_cmd;
 		} else {
-			stderr_msg("Error parsing mediaDirectory value (%s): %s\n",
+			stderr_msg("Error parsing mediaDirectory value (%s): %s.\n",
 				app_res.media_dir, strerror(rv));
 		}
 			
