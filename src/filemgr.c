@@ -189,14 +189,11 @@ int set_location(const char *path, Boolean absolute)
 		err = ENOTDIR;
 		read_error_msg(psz, strerror(err), True);
 	}
-	if(err) {
-		free(psz);
-		return err;
-	}
+	if(err)	return err;
+
 	
 	if(chdir(psz)) {
 		read_error_msg(psz, strerror(errno), True);
-		free(psz);
 		return errno;
 	}
 	

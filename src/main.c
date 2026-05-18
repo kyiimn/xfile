@@ -1159,7 +1159,6 @@ void set_ui_sensitivity(short flags)
 	char *dir_ops[] = {
 		"*makeDirectory",
 		"*makeFile",
-		"*goUp",
 		"*reread",
 		"*detailed",
 		"*showAll",
@@ -1201,6 +1200,8 @@ void set_ui_sensitivity(short flags)
 		if(flags & UIF_SEL)
 			enable_menu_item(app_inst.wmedit, "*reselect", True);
 	}
+	
+	enable_menu_item(app_inst.wmain, "*goUp", app_inst.location ? True : False);
 
 }
 
