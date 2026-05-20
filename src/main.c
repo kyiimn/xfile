@@ -280,7 +280,7 @@ int main(int argc, char **argv)
 	if(argc > 1) {
 		open_spec = realpath(argv[1], NULL);
 		if(!open_spec || access(open_spec, R_OK|X_OK)) {
-			stderr_msg("Error opening directory \'%s\' %s.\n",
+			stderr_msg("Error opening directory \'%s\'. %s.\n",
 				argv[1], strerror(errno));
 			return EXIT_FAILURE;
 		}
@@ -293,7 +293,7 @@ int main(int argc, char **argv)
 
 		open_spec = realpath(def_path, NULL);
 		if(!open_spec) {
-			stderr_msg("Error opening directory \'%s\' %s.\n",
+			stderr_msg("Error opening directory \'%s\'. %s.\n",
 				def_path, strerror(errno));
 			return EXIT_FAILURE;
 		}
