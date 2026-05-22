@@ -2196,9 +2196,14 @@ static void lookup_next(Widget w, XEvent *evt,
 		return;
 	}
 
-	fl->lookup_timeout = XtAppAddTimeOut(
-		XtWidgetToApplicationContext(w),
-		fl->lookup_time, lookup_timeout_cb, (XtPointer)w);
+	if(fl->lookup_timeout != None) {
+		
+		XtRemoveTimeOut(fl->lookup_timeout);
+		
+		fl->lookup_timeout = XtAppAddTimeOut(
+			XtWidgetToApplicationContext(w),
+			fl->lookup_time, lookup_timeout_cb, (XtPointer)w);
+	}
 }
 
 /* This is set in primary_button handler */
