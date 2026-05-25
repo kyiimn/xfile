@@ -745,7 +745,7 @@ void select_pattern_cb(Widget w, XtPointer pclient, XtPointer pcall)
 	char *input;
 	
 	input = input_string_dlg(app_inst.wshell, "Select Pattern",
-		"Specify a glob pattern",
+		"Specify a pattern",
 		last_input, "select", ISF_PRESELECT);
 	if(!input) {
 		file_list_deselect(app_inst.wlist);
