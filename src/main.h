@@ -40,6 +40,7 @@ struct app_resources {
 	String media_mount_cmd;
 	String media_umount_cmd;
 	String dup_suffix;
+	Boolean use_xdg_open;
 	unsigned int history_max;
 };
 

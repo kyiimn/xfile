@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <limits.h>
 #include <ctype.h>
 #include <errno.h>
 #include <unistd.h>
@@ -27,6 +28,7 @@
 #include "mount.h"
 #include "info.h"
 #include "select.h"
+#include "xdgopen.h"
 #include "debug.h"
 
 
@@ -273,10 +275,24 @@ void activate_cb(Widget w, XtPointer pclient, XtPointer pcall)
 		if(rec && rec->nactions) {
 			run_action_proc(w, rec->actions[0].command, NULL);
 		} else {
-			if(DB_ISTEXT(cbd->item.db_type))
-				run_action_proc(w, ENV_DEF_TEXT_CMD, NULL);
-			else
-				pass_to_proc(w, NULL, NULL);
+			char fqn[PATH_MAX];
+			const char *dir;
+			int xdg_rv;
+
+			dir = get_working_dir();
+			if(dir && app_res.use_xdg_open) {
+				snprintf(fqn, sizeof(fqn), "%s/%s", dir, cbd->item.name);
+				xdg_rv = xdg_open_file(fqn);
+			} else {
+				xdg_rv = -1;
+			}
+
+			if(xdg_rv != 0) {
+				if(DB_ISTEXT(cbd->item.db_type))
+					run_action_proc(w, ENV_DEF_TEXT_CMD, NULL);
+				else
+					pass_to_proc(w, NULL, NULL);
+			}
 		}
 	} else {
 		pass_to_proc(w, NULL, NULL);

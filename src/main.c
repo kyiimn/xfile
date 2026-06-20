@@ -42,6 +42,8 @@
 #include "usrtool.h"
 #include "fsutil.h"
 #include "select.h"
+#include "xdgopen.h"
+#include "dnd.h"
 #include "debug.h"
 
 /* Icon bitmaps */
@@ -229,6 +231,12 @@ int main(int argc, char **argv)
 		XmRBoolean, sizeof(Boolean),
 		XtOffsetOf(struct app_resources, force_sync),
 		XmRImmediate,(XtPointer)False
+	},
+	{
+		"useXdgOpen", "UseXdgOpen",
+		XmRBoolean, sizeof(Boolean),
+		XtOffsetOf(struct app_resources, use_xdg_open),
+		XmRImmediate,(XtPointer)True
 	}	
 	};
 
@@ -381,7 +389,13 @@ int main(int argc, char **argv)
 	
 	db_init(&app_inst.type_db);
 	load_db(); 
-	
+
+	if(app_res.use_xdg_open) {
+		if(xdg_open_init()) {
+			stderr_msg("WARNING: Failed to initialize XDG open support.\n");
+			app_res.use_xdg_open = False;
+		}
+	}
 	sigchld_sigid = XtAppAddSignal(app_inst.context,
 		xt_sigchld_handler, NULL);
 		
@@ -497,6 +511,8 @@ static void create_main_window(void)
 	app_inst.wlist = CreateFileList(wscrolled, "fileList", args, n);
 
 	XmScrolledWindowSetAreas(wscrolled, whscrl, wvscrl, app_inst.wlist);
+	
+	dnd_init(app_inst.wlist);
 	
 	/* list popup wants app_inst.wlist, so create menus at last */
 	create_main_menus();
@@ -716,6 +732,8 @@ static void window_close_cb(Widget w, XtPointer client, XtPointer call)
 {
 	if(app_inst.wshell) stop_read_proc();
 	
+	xdg_open_cleanup();
+	
 	if(app_inst.num_sub_shells) {
 		dbg_trace("%d sub-shells still active\n", app_inst.num_sub_shells);
 		XtDestroyWidget(app_inst.wshell);
@@ -922,7 +940,10 @@ static void xfile_open(int argc, char **argv)
 {
 	int errors = 0;
 	int i;
+	Boolean xdg_available = False;
 	if(!load_db()) exit(EXIT_FAILURE);
+	
+	xdg_available = (xdg_open_init() == 0);
 	
 	for(i = 1; i < argc; i++) {
 		struct file_type_rec *ft = NULL;
@@ -975,6 +996,8 @@ static void xfile_open(int argc, char **argv)
 		}
 		if(action) {
 			errors += run_action(carg, action, ft);
+		} else if(xdg_available && xdg_open_file(carg) == 0) {
+			/* opened via XDG default app */
 		} else {
 			stderr_msg("No default action found for \"%s\"\n", carg);
 			errors++;

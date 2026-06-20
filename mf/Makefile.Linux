@@ -16,6 +16,17 @@ LIBDIRS = -L/usr/local/lib
 
 CFLAGS = -O2 -Wall
 
+# Enable XDG open support via GLib/GIO.
+# Comment out the following lines to build without GIO support.
+GIO_CFLAGS := $(shell pkg-config --cflags gio-2.0 2>/dev/null)
+GIO_LIBS := $(shell pkg-config --libs gio-2.0 2>/dev/null)
+
+ifneq ($(GIO_CFLAGS),)
+CFLAGS += -DUSE_GIO $(GIO_CFLAGS)
+else
+$(warning GLib/GIO not found via pkg-config; building without XDG open support)
+endif
+
 include common.mf
 
 # Set to APPDEFS_CORE for core fonts
