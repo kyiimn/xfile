@@ -1,0 +1,77 @@
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Precompiled headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Build product
+xfile
+
+# Generated files
+src/Makefile
+src/.depend
+src/defaults.c
+src/icons.h
+src/xfile.ad
+src/xfile.1
+
+# Debug symbols
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Kernel module compile results
+*.mod*
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+Mkfile.old
+dkms.conf
+
+# Editor/IDE files
+*~
+*.swp
+*.swo
+*.tmp
+.*.sw[a-z]
+*.un~
+.vscode/
+.idea/
+*.iml
+.project
+.cproject
+.settings/
+
+# OS files
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
