@@ -171,6 +171,16 @@ struct file_list_part {
 	Boolean highlight_sel;
 	Boolean has_focus;
 
+	enum { DND_NONE, DND_PRESSED, DND_DRAG } dnd_state;
+	unsigned int dnd_src_item;
+	Boolean dnd_copy_modifier;
+	Boolean dnd_move_modifier;
+	Boolean drag_and_drop;
+	Boolean confirm_dnd_move;
+	unsigned char dnd_default_op;
+	Boolean dnd_highlight_active;
+	unsigned int dnd_highlight_item;
+
 	struct file_list_selection cur_sel;
 
 	/* pointer state */

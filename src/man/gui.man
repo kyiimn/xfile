@@ -23,6 +23,32 @@ the \fBEdit > Copy Here\fP and \fBEdit > Move Here\fP menu commands.
 XFile owned selection may also be pasted as a list of space separated
 file names in an application/widget that requests plain-text data, such
 as terminal or text editor.
+.SS Drag and Drop
+When the \fBdragAndDrop\fP resource is enabled (the default), selected files
+may be dragged from one XFile window and dropped onto another. Drag is
+initiated by pressing \fBBtn1\fP (left mouse button) on a selected item and
+moving the pointer while holding the button.
+.PP
+The modifier keys determine the drag operation:
+.TP
+.BR None " (default drag)"
+For drops within the same XFile window, the default operation is
+\fBMove\fP; for drops across windows or from external applications,
+the default operation is \fBCopy\fP.
+.TP
+.BR Ctrl + drag
+Forces a \fBCopy\fP operation regardless of source and destination.
+.TP
+.BR Shift + drag
+Forces a \fBMove\fP operation regardless of source and destination.
+.PP
+Dropping files onto the same directory they originate from is rejected.
+Symbolic link operations are not supported in drag-and-drop.
+.PP
+When \fBconfirmDnDMove\fP is enabled (the default), move operations
+will prompt for confirmation before proceeding. The \fBdndDefaultOperation\fP
+resource controls the default operation when no modifier key is held
+during a same-window drag (valid values: \fBmove\fP or \fBcopy\fP).
 .SS Mount Points
 For mount points, Mount/Unmount action will be displayed in the context menu.
 Depending on system configuration, alternate un/mount command may

@@ -46,6 +46,9 @@ enum { XfCOMPACT, XfDETAILED };
 #define XfRSortOrder "SortOrder"
 #define XfRSortDirection "SortDirection"
 #define XfRViewMode "ViewMode"
+#define XfRDndOperation "DndOperation"
+
+enum { XfDROP_COPY, XfDROP_MOVE, XfDROP_LINK };
 
 /* Resource names and classes */
 #define XfNactivateCallback "defaultActionCallback"
@@ -102,6 +105,14 @@ enum { XfCOMPACT, XfDETAILED };
 #define XfCCaseSensitive "CaseSensitive"
 #define XfNforegroundThreshold "foregroundThreshold"
 #define XfCForegroundThreshold "ForegroundThreshold"
+
+/* Drag-and-Drop resource names and classes */
+#define XmNdragAndDrop "dragAndDrop"
+#define XmCDragAndDrop "DragAndDrop"
+#define XmNconfirmDnDMove "confirmDnDMove"
+#define XmCConfirmDnDMove "ConfirmDnDMove"
+#define XmNdndDefaultOperation "dndDefaultOperation"
+#define XmCDndDefaultOperation "DndDefaultOperation"
 
 
 #define CreateFileList(parent, name, args, nargs) \

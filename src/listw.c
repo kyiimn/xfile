@@ -9,6 +9,7 @@
 #include <Xm/XmP.h>
 #include <Xm/RepType.h>
 #include <Xm/RowColumn.h>
+#include <Xm/DragDrop.h>
 #ifndef NO_XKB
 #include <X11/XKBlib.h>
 #endif
@@ -28,6 +29,7 @@
 #include "listwp.h"
 #include "mbstr.h"
 #include "debug.h"
+#include "dnd.h"
 
 /* Local routines */
 static void class_initialize(void);
@@ -103,6 +105,8 @@ static void pg_scroll(Widget, XEvent*, String*, Cardinal*);
 static void secondary_button(Widget, XEvent*, String*, Cardinal*);
 static void dir_up(Widget, XEvent*, String*, Cardinal*);
 static void delete(Widget, XEvent*, String*, Cardinal*);
+static Boolean item_at_xy_selected(Widget, int, int, unsigned int*);
+static void start_drag(Widget, XEvent*, String*, Cardinal*);
 
 #define WARNING(w,s) XtAppWarning(XtWidgetToApplicationContext(w), s)
 
@@ -342,6 +346,33 @@ static XtResource resources[] = {
 		RFO(file_list.case_sensitive),
 		XtRImmediate,
 		(void*)False
+	},
+	{
+		XmNdragAndDrop,
+		XmCDragAndDrop,
+		XtRBoolean,
+		sizeof(Boolean),
+		RFO(file_list.drag_and_drop),
+		XtRImmediate,
+		(void*)True
+	},
+	{
+		XmNconfirmDnDMove,
+		XmCConfirmDnDMove,
+		XtRBoolean,
+		sizeof(Boolean),
+		RFO(file_list.confirm_dnd_move),
+		XtRImmediate,
+		(void*)True
+	},
+	{
+		XmNdndDefaultOperation,
+		XmCDndDefaultOperation,
+		XfRDndOperation,
+		sizeof(unsigned char),
+		RFO(file_list.dnd_default_op),
+		XtRImmediate,
+		(void*)XfDROP_MOVE
 	}
 };
 #undef RFO
@@ -370,7 +401,7 @@ static char translations[] = {
 	
 	"<Btn1Down>: PrimaryButton(Down)\n"
 	"<Btn1Up>: PrimaryButton(Up) \n"
-	"<Btn1Motion>: PrimaryButtonMotion()\n"
+	"<Btn1Motion>: PrimaryButtonMotion() StartDrag()\n"
 	"<Btn3Down>: SecondaryButton() \n"
 
 	"<Key>Return: Select() Activate()\n"	
@@ -418,6 +449,7 @@ static XtActionsRec actions[] = {
 	{ "LookUpInput", lookup_input },
 	{ "ResetLookUp", reset_lookup },
 	{ "LookUpNext", lookup_next },
+	{ "StartDrag", start_drag },
 	{ "FocusIn", focus_in },
 	{ "FocusOut", focus_out },
 	{ "SecondaryButton", secondary_button },
@@ -435,6 +467,10 @@ static char *sort_by_names[] = {
 
 static char *view_mode_names[] = {
 	"compact", "detailed"
+};
+
+static char *dnd_op_names[] = {
+	"copy", "move", "link"
 };
 
 /* Widget class declarations */
@@ -1787,6 +1823,12 @@ static void initialize(Widget wreq, Widget wnew,
 	fl->file_list.show_contents = False;
 	fl->file_list.sz_lookup[0] = '\0';
 	fl->file_list.dragging = False;
+	fl->file_list.dnd_state = DND_NONE;
+	fl->file_list.dnd_src_item = 0;
+	fl->file_list.dnd_copy_modifier = False;
+	fl->file_list.dnd_move_modifier = False;
+	fl->file_list.dnd_highlight_active = False;
+	fl->file_list.dnd_highlight_item = 0;
 	fl->file_list.in_sb_update = False;
 	fl->file_list.ptr_last_valid = False;
 	fl->file_list.highlight_sel = False;
@@ -1957,6 +1999,9 @@ static void class_initialize(void)
 
 	XmRepTypeRegister(XfRViewMode,
 		view_mode_names, NULL, XtNumber(view_mode_names));
+
+	XmRepTypeRegister(XfRDndOperation,
+		dnd_op_names, NULL, XtNumber(dnd_op_names));
 }
 
 static void destroy(Widget w)
@@ -2251,6 +2296,9 @@ static void primary_button(Widget w, XEvent *evt,
 		fl->ptr_last_valid = True;
 		fl->dblclk_lock = False;
 		
+		fl->dnd_copy_modifier = !!(evt->xbutton.state & ControlMask);
+		fl->dnd_move_modifier = !!(evt->xbutton.state & ShiftMask);
+		
 		if(extend) {
 			unsigned int to;
 			
@@ -2258,15 +2306,36 @@ static void primary_button(Widget w, XEvent *evt,
 				evt->xbutton.y + fl->yoff, &to)) {
 				select_range(w, get_cursor(w), to);
 			}
+			fl->dnd_state = DND_NONE;
 
 		} else {
 			if(fl->dblclk_timeout == None) {
+				unsigned int cur;
+				
 				if(get_at_xy(w, evt->xbutton.x + fl->xoff,
-					evt->xbutton.y + fl->yoff, &fl->last_clicked)) {
-					set_cursor(w, fl->last_clicked);
+					evt->xbutton.y + fl->yoff, &cur)) {
+					set_cursor(w, cur);
+					fl->last_clicked = cur;
+					
+					if(item_at_xy_selected(w,
+						evt->xbutton.x + fl->xoff,
+						evt->xbutton.y + fl->yoff,
+						&fl->dnd_src_item)) {
+						fl->dnd_state = DND_PRESSED;
+					} else {
+						select_at_xy(w,
+							evt->xbutton.x + fl->xoff,
+							evt->xbutton.y + fl->yoff,
+							fl->sel_add_mode);
+						fl->dnd_src_item = cur;
+						fl->dnd_state = DND_PRESSED;
+					}
+					
 					fl->dblclk_timeout = XtAppAddTimeOut(
 						XtWidgetToApplicationContext(w),
 						fl->dblclk_int, dblclk_timeout_cb, w);
+				} else {
+		if(fl->dnd_state != DND_DRAG) fl->dnd_state = DND_NONE;
 				}
 			} else {
 				unsigned int cur;
@@ -2279,6 +2348,7 @@ static void primary_button(Widget w, XEvent *evt,
 					(cur == fl->last_clicked)) {
 						fl->dblclk_lock = True;
 					}
+				fl->dnd_state = DND_NONE;
 			}
 		}
 
@@ -2308,7 +2378,11 @@ static void primary_button(Widget w, XEvent *evt,
 			/* reset selection rectangle and drag mode */
 			memset(&fl->sel_rect, 0, sizeof(struct rectangle));
 			fl->dragging = False;
-		} else if(fl->dblclk_lock) {
+		}
+		
+		fl->dnd_state = DND_NONE;
+		
+		if(fl->dblclk_lock) {
 			fl->dblclk_lock = False;
 			default_action_handler(w, evt->xbutton.state);
 		} else if(!extend) {
@@ -2374,6 +2448,30 @@ static void button_motion(Widget w, XEvent *evt,
 	delx = evt->xbutton.x - fl->ptr_last_x;
 	dely = evt->xbutton.y - fl->ptr_last_y;
 	
+	if(fl->dnd_state == DND_PRESSED) {
+		if(abs(delx) >= fl->drag_offset || abs(dely) >= fl->drag_offset) {
+			unsigned int cur;
+			
+			if(item_at_xy_selected(w,
+					evt->xbutton.x + fl->xoff,
+					evt->xbutton.y + fl->yoff,
+					&cur)) {
+				fl->dnd_state = DND_DRAG;
+				fl->dnd_src_item = cur;
+			} else if(fl->dnd_src_item < fl->num_items &&
+				fl->items[fl->dnd_src_item].selected) {
+				fl->dnd_state = DND_DRAG;
+			} else {
+				fl->dnd_state = DND_NONE;
+			}
+		}
+	}
+	
+	if(fl->dnd_state == DND_DRAG) {
+		if(abs(delx) < fl->drag_offset && abs(dely) < fl->drag_offset)
+			return;
+	}
+	
 	if(fl->dragging) {
 		/* erase previous rubber bands, if any */
 		draw_rubber_bands(w);
@@ -2415,9 +2513,32 @@ static void button_motion(Widget w, XEvent *evt,
 	draw_rubber_bands(w);
 }
 
-/*
- * Handles secondary button select & post context menu
- */
+static Boolean item_at_xy_selected(Widget w, int x, int y, unsigned int *pindex)
+{
+	struct file_list_part *fl = FL_PART(w);
+	unsigned int i;
+	
+	if(!get_at_xy(w, x, y, &i)) return False;
+	if(!fl->items[i].selected) return False;
+	
+	*pindex = i;
+	return True;
+}
+
+static void start_drag(Widget w, XEvent *evt,
+	String *params, Cardinal *nparams)
+{
+	struct file_list_part *fl = FL_PART(w);
+	
+	(void)params;
+	(void)nparams;
+	
+	if(fl->dnd_state != DND_DRAG) return;
+	if(!fl->cur_sel.count) return;
+	
+	dnd_start_drag(w, evt);
+}
+
 static void secondary_button(Widget w, XEvent *evt,
 	String *params, Cardinal *nparams)
 {
