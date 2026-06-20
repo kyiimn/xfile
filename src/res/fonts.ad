@@ -1,4 +1,13 @@
 !-----------------------------------------------------------------------------
+! Application-wide default render table (core fonts)
+!-----------------------------------------------------------------------------
+*renderTable: variable fixed
+*renderTable.variable.fontType: FONT_IS_FONT
+*renderTable.variable.fontName: -*-helvetica-medium-r-*-*-12-*-*-*-*-*-*-*
+*renderTable.fixed.fontType: FONT_IS_FONT
+*renderTable.fixed.fontName: -*-fixed-medium-r-*-*-12-*-*-*-*-*-*-*
+
+!-----------------------------------------------------------------------------
 ! Renditions for file name labels
 !-----------------------------------------------------------------------------
 *FileList.renderTable: regular directory symlink special
