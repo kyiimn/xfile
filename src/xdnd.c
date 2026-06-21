@@ -475,27 +475,34 @@ xdnd_handle_finished(struct xdnd_session *s)
 static Window
 xdnd_find_target(Display *dpy, Window root, int root_x, int root_y)
 {
-	Window target;
+	Window current;
 	Window child;
 	int x, y;
 	unsigned int mask;
 
-	target = root;
-	child = root;
-	x = root_x;
-	y = root_y;
+	current = root;
+	child = None;
+
+	if(!XQueryPointer(dpy, root, &root, &child,
+		&x, &y, &x, &y, &mask)) {
+		return root;
+	}
 
 	while(child != None) {
 		Window new_child;
 
-		if(!XQueryPointer(dpy, child, &target, &new_child,
+		current = child;
+		if(!XQueryPointer(dpy, current, &root, &new_child,
 			&x, &y, &x, &y, &mask)) {
-			return None;
+			return current;
 		}
 		child = new_child;
 	}
 
-	return target;
+	fprintf(stderr, "[XDnD] find_target: deepest=0x%lx\n",
+		(unsigned long)current);
+
+	return (current != None) ? current : root;
 }
 
 static Window
