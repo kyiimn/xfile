@@ -46,6 +46,7 @@ static Atom XA_XDND_SELECTION = None;
 static Atom XA_XDND_TYPELIST = None;
 static Atom XA_XDND_ACTIONLIST = None;
 static Atom XA_XDND_ACTIONDESCRIPTION = None;
+static Atom XA_XDND_PROXY = None;
 
 /* XDnD action atoms */
 static Atom XA_XDND_ACTION_COPY = None;
@@ -125,6 +126,7 @@ xdnd_init(Display *dpy)
 	XA_XDND_ACTIONLIST = XInternAtom(dpy, "_XdndActionList", False);
 	XA_XDND_ACTIONDESCRIPTION = XInternAtom(dpy,
 		"_XdndActionDescription", False);
+	XA_XDND_PROXY = XInternAtom(dpy, "XdndProxy", False);
 
 	XA_XDND_ACTION_COPY = XInternAtom(dpy, "XdndActionCopy", False);
 	XA_XDND_ACTION_MOVE = XInternAtom(dpy, "XdndActionMove", False);
@@ -153,6 +155,7 @@ xdnd_destroy(void)
 	XA_XDND_TYPELIST = None;
 	XA_XDND_ACTIONLIST = None;
 	XA_XDND_ACTIONDESCRIPTION = None;
+	XA_XDND_PROXY = None;
 	XA_XDND_ACTION_COPY = None;
 	XA_XDND_ACTION_MOVE = None;
 	XA_XDND_ACTION_LINK = None;
@@ -508,24 +511,66 @@ xdnd_find_target(Display *dpy, Window root, int root_x, int root_y)
 static Window
 xdnd_find_aware_ancestor(Display *dpy, Window start)
 {
-	Window walk, parent, root;
+	Window walk, parent, root, proxy;
 	Window *children;
 	unsigned int nchildren;
 	int version;
+	Atom type;
+	int fmt;
+	unsigned long nitems, bytes;
+	unsigned char *prop;
 
 	walk = start;
 	while(walk != None) {
+		/* Check XdndProxy first — if set, the proxy window
+		 * is the one that receives DnD messages. */
+		proxy = None;
+		prop = NULL;
+		if(XGetWindowProperty(dpy, walk, XA_XDND_PROXY, 0, 1, False,
+			XA_WINDOW, &type, &fmt, &nitems, &bytes, &prop) == Success
+			&& prop != NULL) {
+			if(type == XA_WINDOW && fmt == 32 && nitems >= 1) {
+				proxy = ((Window*)prop)[0];
+			}
+			XFree(prop);
+		}
+
+		if(proxy != None) {
+			/* Proxy window found — check XdndAware on the proxy */
+			fprintf(stderr, "[XDnD] find_aware_ancestor: window 0x%lx has XdndProxy=0x%lx\n",
+				(unsigned long)walk, (unsigned long)proxy);
+			version = xdnd_get_target_version(proxy);
+			fprintf(stderr, "[XDnD] find_aware_ancestor: proxy 0x%lx version=%d\n",
+				(unsigned long)proxy, version);
+			if(version >= 3) return proxy;
+			/* Proxy exists but no XdndAware — keep walking up from proxy */
+			walk = proxy;
+			continue;
+		}
+
+		/* No proxy — check XdndAware directly */
 		version = xdnd_get_target_version(walk);
+		fprintf(stderr, "[XDnD] find_aware_ancestor: checking window 0x%lx version=%d\n",
+			(unsigned long)walk, version);
 		if(version >= 3) return walk;
 
 		if(!XQueryTree(dpy, walk, &root, &parent, &children, &nchildren)) {
+			fprintf(stderr, "[XDnD] find_aware_ancestor: XQueryTree failed for 0x%lx\n",
+				(unsigned long)walk);
 			break;
 		}
 		if(children) XFree(children);
 
-		if(parent == None || parent == root) break;
+		fprintf(stderr, "[XDnD] find_aware_ancestor: walk=0x%lx root=0x%lx parent=0x%lx\n",
+			(unsigned long)walk, (unsigned long)root, (unsigned long)parent);
+		if(parent == None || parent == root) {
+			fprintf(stderr, "[XDnD] find_aware_ancestor: stopping (parent==%s)\n",
+				parent == None ? "None" : "root");
+			break;
+		}
 		walk = parent;
 	}
+	fprintf(stderr, "[XDnD] find_aware_ancestor: returning None\n");
 	return None;
 }
 
@@ -698,6 +743,18 @@ xdnd_track_drag(XtPointer client_data)
 			if(now == 0) now = s->start_time;
 			s->last_position_time = now;
 			xdnd_send_position(s, target, root_x, root_y);
+		} else {
+			/* Target doesn't support XDnD. If we were tracking a previous
+			 * target, send leave. Reset tracking state. */
+			if(s->last_target != None && !s->left_sent) {
+				fprintf(stderr, "[XDnD] track_drag: target not XDnD aware, sending leave to 0x%lx\n",
+					(unsigned long)s->last_target);
+				xdnd_send_leave(s, s->last_target);
+				s->left_sent = True;
+			}
+			s->last_target = None;
+			s->got_status = False;
+			s->status_action = None;
 		}
 	} else if(target == s->last_target) {
 		now = XtLastTimestampProcessed(dpy);
