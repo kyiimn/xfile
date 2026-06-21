@@ -498,6 +498,30 @@ xdnd_find_target(Display *dpy, Window root, int root_x, int root_y)
 	return target;
 }
 
+static Window
+xdnd_find_aware_ancestor(Display *dpy, Window start)
+{
+	Window walk, parent, root;
+	Window *children;
+	unsigned int nchildren;
+	int version;
+
+	walk = start;
+	while(walk != None) {
+		version = xdnd_get_target_version(walk);
+		if(version >= 3) return walk;
+
+		if(!XQueryTree(dpy, walk, &root, &parent, &children, &nchildren)) {
+			break;
+		}
+		if(children) XFree(children);
+
+		if(parent == None || parent == root) break;
+		walk = parent;
+	}
+	return None;
+}
+
 static void
 xdnd_poll_timeout_cb(XtPointer client_data, XtIntervalId *id)
 {
@@ -588,9 +612,14 @@ xdnd_track_drag(XtPointer client_data)
 		xdnd_dbg("track_drag: button released, last_target=0x%lx, got_status=%d, status_action=%lu, drop_sent=%d\n",
 			(unsigned long)s->last_target, s->got_status,
 			(unsigned long)s->status_action, s->drop_sent);
+		fprintf(stderr, "[XDnD] track_drag: button released, last_target=0x%lx, got_status=%d, status_action=%lu, drop_sent=%d\n",
+			(unsigned long)s->last_target, s->got_status,
+			(unsigned long)s->status_action, s->drop_sent);
 		if(s->last_target != None && s->got_status &&
 			s->status_action != None &&
 			s->status_action != XA_XDND_ACTION_PRIVATE) {
+			fprintf(stderr, "[XDnD] track_drag: sending XdndDrop to target 0x%lx\n",
+				(unsigned long)s->last_target);
 			if(!s->drop_sent) {
 				s->drop_sent = True;
 				xdnd_dbg("track_drag: sending drop to target 0x%lx\n",
@@ -603,6 +632,8 @@ xdnd_track_drag(XtPointer client_data)
 			}
 		} else {
 			if(s->last_target != None && !s->left_sent) {
+				fprintf(stderr, "[XDnD] track_drag: sending XdndLeave to target 0x%lx\n",
+					(unsigned long)s->last_target);
 				xdnd_send_leave(s, s->last_target);
 				s->left_sent = True;
 			}
@@ -641,8 +672,18 @@ xdnd_track_drag(XtPointer client_data)
 		s->left_sent = False;
 
 		version = xdnd_get_target_version(target);
-		xdnd_dbg("track_drag: new target=0x%lx, version=%d\n",
+		fprintf(stderr, "[XDnD] track_drag: target=0x%lx, version=%d\n",
 			(unsigned long)target, version);
+		if(version < 3) {
+			Window aware_win = xdnd_find_aware_ancestor(dpy, target);
+			if(aware_win != None) {
+				int ver = xdnd_get_target_version(aware_win);
+				fprintf(stderr, "[XDnD] track_drag: found _XdndAware on ancestor 0x%lx version=%d\n",
+					(unsigned long)aware_win, ver);
+				target = aware_win;
+				version = ver;
+			}
+		}
 		if(version >= 3) {
 			xdnd_send_enter(s, target, version);
 			s->last_target = target;
