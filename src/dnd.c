@@ -448,7 +448,13 @@ dnd_drag_finish_cb(Widget w, XtPointer client_data, XtPointer call_data)
 	/* Belt-and-suspenders: stop suppressing BadAtom once the drag finishes. */
 	dnd_active = False;
 
-	xdnd_end_drag();
+	if(xdnd_has_active_target()) {
+		fprintf(stderr, "[DND] drag_finish_cb: XDnD has active target, requesting finish\n");
+		xdnd_request_finish();
+	} else {
+		fprintf(stderr, "[DND] drag_finish_cb: XDnD has no active target, ending drag\n");
+		xdnd_end_drag();
+	}
 
 	/* Disown the custom DnD selection. */
 	if(dnd_current_ctx != NULL && dnd_current_ctx->source_widget != NULL) {

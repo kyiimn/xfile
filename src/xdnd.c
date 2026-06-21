@@ -77,6 +77,7 @@ struct xdnd_session {
 	Bool drop_sent;
 	Bool pointer_grabbed;
 	Bool left_sent;
+	Bool finish_requested;  /* Motif drag finished, XDnD should complete and exit */
 
 	/* Last reported pointer position */
 	int last_root_x;
@@ -133,6 +134,19 @@ xdnd_init(Display *dpy)
 	XA_XDND_ACTION_LINK = XInternAtom(dpy, "XdndActionLink", False);
 	XA_XDND_ACTION_ASK = XInternAtom(dpy, "XdndActionAsk", False);
 	XA_XDND_ACTION_PRIVATE = XInternAtom(dpy, "XdndActionPrivate", False);
+}
+
+void
+xdnd_request_finish(void)
+{
+	if(session == NULL) return;
+	session->finish_requested = True;
+}
+
+Boolean
+xdnd_has_active_target(void)
+{
+	return (session != NULL && session->last_target != None);
 }
 
 void
@@ -586,6 +600,14 @@ xdnd_poll_timeout_cb(XtPointer client_data, XtIntervalId *id)
 	if(s != session) return;
 
 	s->poll_timer = 0;
+
+	if(s->finish_requested && s->drop_sent) {
+		xdnd_dbg("poll_timeout_cb: finish_requested and drop_sent, ending drag\n");
+		fprintf(stderr, "[XDnD] poll_timeout_cb: finish_requested and drop_sent, ending drag\n");
+		xdnd_end_drag();
+		return;
+	}
+
 	xdnd_track_drag((XtPointer)s);
 
 	if(s == session) {
@@ -653,6 +675,35 @@ xdnd_track_drag(XtPointer client_data)
 	root = XDefaultRootWindow(dpy);
 
 	xdnd_process_client_messages(s);
+
+	if(s->finish_requested) {
+		if(s->last_target != None && s->got_status &&
+			s->status_action != None &&
+			s->status_action != XA_XDND_ACTION_PRIVATE) {
+			if(!s->drop_sent) {
+				s->drop_sent = True;
+				xdnd_dbg("track_drag: finish_requested, sending drop to 0x%lx\n",
+					(unsigned long)s->last_target);
+				fprintf(stderr, "[XDnD] track_drag: sending XdndDrop to target 0x%lx\n",
+					(unsigned long)s->last_target);
+				xdnd_send_drop(s, s->last_target);
+				XtOwnSelection(s->source_widget, XA_XDND_SELECTION,
+					s->start_time, xdnd_convert_selection,
+					xdnd_lose_selection, NULL);
+			}
+		} else {
+			if(s->last_target != None && !s->left_sent) {
+				xdnd_dbg("track_drag: finish_requested, sending leave to 0x%lx\n",
+					(unsigned long)s->last_target);
+				fprintf(stderr, "[XDnD] track_drag: finish_requested, sending XdndLeave to target 0x%lx\n",
+					(unsigned long)s->last_target);
+				xdnd_send_leave(s, s->last_target);
+				s->left_sent = True;
+			}
+		}
+		s->track_proc = 0;
+		return True;
+	}
 
 	if(!XQueryPointer(dpy, root, &root, &child,
 		&root_x, &root_y, &win_x, &win_y, &mask)) {
