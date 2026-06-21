@@ -404,6 +404,9 @@ xdnd_send_enter(struct xdnd_session *s, Window target, int version)
 	data[3] = s->supported_types[1];
 	data[4] = s->supported_types[2];
 
+	fprintf(stderr, "[XDnD] send_enter: source=0x%lx target=0x%lx version=%d types=%lu %lu %lu\n",
+		(unsigned long)s->source_window, (unsigned long)target, version,
+		(unsigned long)data[2], (unsigned long)data[3], (unsigned long)data[4]);
 	xdnd_send_client_message(target, XA_XDND_ENTER, data);
 }
 
@@ -422,6 +425,9 @@ xdnd_send_position(struct xdnd_session *s, Window target,
 	data[3] = s->start_time;
 	data[4] = xdnd_default_action(s);
 
+	fprintf(stderr, "[XDnD] send_position: source=0x%lx target=0x%lx x=%d y=%d action=%lu\n",
+		(unsigned long)s->source_window, (unsigned long)target,
+		root_x, root_y, (unsigned long)data[4]);
 	xdnd_send_client_message(target, XA_XDND_POSITION, data);
 }
 
@@ -464,6 +470,8 @@ xdnd_handle_status(struct xdnd_session *s, XClientMessageEvent *e)
 
 	s->got_status = True;
 	s->status_action = e->data.l[4];
+	fprintf(stderr, "[XDnD] handle_status: action=%lu, accept_bit=%d, got_status=%d\n",
+		(unsigned long)s->status_action, (int)(e->data.l[1] & 0x1), s->got_status);
 	xdnd_dbg("handle_status: action=%lu, accept_bit=%d\n",
 		(unsigned long)s->status_action, (int)(e->data.l[1] & 0x1));
 }
@@ -473,6 +481,7 @@ xdnd_handle_finished(struct xdnd_session *s)
 {
 	if(s == NULL) return;
 
+	fprintf(stderr, "[XDnD] handle_finished: received XdndFinished\n");
 	xdnd_dbg("handle_finished: received XdndFinished\n");
 
 	s->drop_sent = True;
@@ -601,7 +610,7 @@ xdnd_poll_timeout_cb(XtPointer client_data, XtIntervalId *id)
 
 	s->poll_timer = 0;
 
-	if(s->finish_requested && s->drop_sent) {
+	if(s->finish_requested && (s->drop_sent || s->left_sent)) {
 		xdnd_dbg("poll_timeout_cb: finish_requested and drop_sent, ending drag\n");
 		fprintf(stderr, "[XDnD] poll_timeout_cb: finish_requested and drop_sent, ending drag\n");
 		xdnd_end_drag();
@@ -644,6 +653,8 @@ xdnd_process_client_messages(struct xdnd_session *s)
 		ClientMessage, &ev)) {
 		XClientMessageEvent *cm = (XClientMessageEvent*)&ev;
 
+		fprintf(stderr, "[XDnD] process_messages: type=%lu window=0x%lx\n",
+			(unsigned long)cm->message_type, (unsigned long)cm->window);
 		if(cm->message_type == XA_XDND_STATUS) {
 			xdnd_handle_status(s, cm);
 		} else if(cm->message_type == XA_XDND_FINISHED) {
@@ -677,32 +688,45 @@ xdnd_track_drag(XtPointer client_data)
 	xdnd_process_client_messages(s);
 
 	if(s->finish_requested) {
-		if(s->last_target != None && s->got_status &&
+		if(s->got_status &&
 			s->status_action != None &&
 			s->status_action != XA_XDND_ACTION_PRIVATE) {
+			/* Target accepted the drop -- send XdndDrop */
 			if(!s->drop_sent) {
 				s->drop_sent = True;
 				xdnd_dbg("track_drag: finish_requested, sending drop to 0x%lx\n",
 					(unsigned long)s->last_target);
-				fprintf(stderr, "[XDnD] track_drag: sending XdndDrop to target 0x%lx\n",
+				fprintf(stderr, "[XDnD] track_drag: finish_requested, got_status, sending XdndDrop to 0x%lx\n",
 					(unsigned long)s->last_target);
 				xdnd_send_drop(s, s->last_target);
 				XtOwnSelection(s->source_widget, XA_XDND_SELECTION,
 					s->start_time, xdnd_convert_selection,
 					xdnd_lose_selection, NULL);
 			}
-		} else {
+			/* Remove work proc. Poll timer handles XdndFinished/cleanup. */
+			s->track_proc = 0;
+			return True;
+		} else if(s->got_status) {
+			/* Target responded but rejected the drop */
 			if(s->last_target != None && !s->left_sent) {
-				xdnd_dbg("track_drag: finish_requested, sending leave to 0x%lx\n",
+				xdnd_dbg("track_drag: finish_requested, target rejected, sending leave to 0x%lx\n",
 					(unsigned long)s->last_target);
-				fprintf(stderr, "[XDnD] track_drag: finish_requested, sending XdndLeave to target 0x%lx\n",
+				fprintf(stderr, "[XDnD] track_drag: finish_requested, target rejected, sending XdndLeave to target 0x%lx\n",
 					(unsigned long)s->last_target);
 				xdnd_send_leave(s, s->last_target);
 				s->left_sent = True;
 			}
+			s->track_proc = 0;
+			return True;
+		} else {
+			/* Target hasn't responded yet. Keep polling for XdndStatus.
+			 * The poll timer will continue calling this function.
+			 * xdnd_process_client_messages() will check for XdndStatus.
+			 * Timeout will eventually clean up if no response. */
+			fprintf(stderr, "[XDnD] track_drag: finish_requested, waiting for XdndStatus...\n");
+			/* Don't remove work proc -- keep checking for status */
+			return False;
 		}
-		s->track_proc = 0;
-		return True;
 	}
 
 	if(!XQueryPointer(dpy, root, &root, &child,
