@@ -18,6 +18,7 @@
 #include <Xm/DragIcon.h>
 #include <Xm/AtomMgr.h>
 #include "dnd.h"
+#include "xdnd.h"
 #include "main.h"
 #include "const.h"
 #include "listw.h"
@@ -35,6 +36,9 @@ Atom XA_TEXT_URI_LIST = None;
 Atom XA_FILE_NAME = None;
 Atom XA_XFILE_FILE_LIST = None;
 Atom XA_UTF8_STRING = None;
+Atom XA_TARGETS = None;
+Atom XA_TIMESTAMP = None;
+
 
 /* Widget reference for drag/drop callbacks */
 static Widget wlist_ref = NULL;
@@ -48,17 +52,6 @@ Atom dnd_import_targets[DND_NUM_IMPORT_TARGETS];
 #define FL_PART(w) &((struct file_list_rec*)w)->file_list
 #define FL_REC(w) (struct file_list_rec*)w
 
-/* Context passed through XmNclientData during a drag */
-struct dnd_drag_context {
-	Widget source_widget;
-	unsigned int num_items;
-	char **paths;
-	unsigned char operation;
-	Widget drag_icon;
-	char *dir_path;
-	char **names;
-};
-
 /* Data passed from dnd_drop_cb to dnd_transfer_cb via client_data */
 struct dnd_transfer_data {
 	char *dest_dir;
@@ -67,8 +60,10 @@ struct dnd_transfer_data {
 
 /* Local routines */
 static Widget dnd_create_drag_icon(Widget w, Pixmap icon, Pixmap mask);
-static void dnd_convert_cb(Widget w, XtPointer client_data,
-	XtPointer call_data);
+static Boolean dnd_convert_proc(Widget w, Atom *selection, Atom *target,
+	Atom *type, XtPointer *value, unsigned long *length,
+	int *format);
+
 static void dnd_operation_changed_cb(Widget w, XtPointer client_data,
 	XtPointer call_data);
 static void dnd_drag_finish_cb(Widget w, XtPointer client_data,
@@ -77,7 +72,9 @@ static void dnd_drag_end_cb(Widget w, XtPointer client_data,
 	XtPointer call_data);
 static void dnd_drag_site_cb(Widget w, XtPointer client, XtPointer call);
 static void dnd_drop_cb(Widget w, XtPointer client, XtPointer call);
-static void dnd_transfer_cb(Widget w, XtPointer client, XtPointer call);
+static void dnd_transfer_cb(Widget w, XtPointer client_data,
+	Atom *selection, Atom *type, XtPointer value,
+	unsigned long *length, int *format);
 static char *dnd_uri_to_path(const char *uri);
 static void dnd_refresh_cb(XtPointer client_data, XtIntervalId *id);
 static Boolean dnd_move_confirm_wp(XtPointer client_data);
@@ -153,33 +150,73 @@ dnd_dir_path_from_widget(Widget w)
 	return result;
 }
 
-static void
-dnd_convert_cb(Widget w, XtPointer client_data, XtPointer call_data)
+static Boolean
+dnd_convert_proc(Widget w, Atom *selection, Atom *target,
+	Atom *type, XtPointer *value, unsigned long *length,
+	int *format)
 {
-	struct dnd_drag_context *ctx = (struct dnd_drag_context*)client_data;
-	XmConvertCallbackStruct *cs = (XmConvertCallbackStruct*)call_data;
+	struct dnd_drag_context *ctx;
 	unsigned int i;
+	int n;
 	char *data;
 	size_t len;
+	XtPointer client_data_val;
+	Arg args[1];
 
-	(void)w;
+	(void)selection;
 
-	if(ctx == NULL || cs == NULL) return;
 
-	if(cs->target == XA_TEXT_URI_LIST) {
+	XtSetArg(args[0], XmNclientData, &client_data_val);
+	XtGetValues(w, args, 1);
+	ctx = (struct dnd_drag_context*)client_data_val;
+
+	if(ctx == NULL || target == NULL) {
+		return False;
+	}
+
+
+	if(*target == XA_TARGETS) {
+		Atom *exportTargets;
+		n = DND_NUM_EXPORT_TARGETS + 2;
+		exportTargets = (Atom*)XtMalloc(sizeof(Atom) * n);
+		if(!exportTargets) return False;
+		for(i = 0; i < DND_NUM_EXPORT_TARGETS; i++)
+			exportTargets[i] = dnd_export_targets[i];
+		exportTargets[DND_NUM_EXPORT_TARGETS + 0] = XA_TARGETS;
+		exportTargets[DND_NUM_EXPORT_TARGETS + 1] = XA_TIMESTAMP;
+		*type = XA_ATOM;
+		*format = 32;
+		/* length is the number of 32-bit elements; on 64-bit
+		 * platforms each Atom occupies two 32-bit words. */
+		*length = (n * sizeof(Atom)) / 4;
+		*value = (XtPointer)exportTargets;
+		return True;
+
+	} else if(*target == XA_TIMESTAMP) {
+		Atom *ts;
+		ts = (Atom*)XtMalloc(sizeof(unsigned long));
+		if(!ts) {
+			return False;
+		}
+		*ts = (Atom)ctx->start_time;
+		*type = XA_INTEGER;
+		*format = 32;
+		*length = 1;
+		*value = (XtPointer)ts;
+		return True;
+
+	} else if(*target == XA_TEXT_URI_LIST) {
 		len = 0;
 		for(i = 0; i < ctx->num_items; i++) {
 			len += strlen("file://") + strlen(ctx->paths[i]) + 2;
 		}
 		if(len == 0) {
-			cs->status = XmCONVERT_REFUSE;
-			return;
+			return False;
 		}
 
 		data = XtMalloc(len + 1);
 		if(!data) {
-			cs->status = XmCONVERT_REFUSE;
-			return;
+			return False;
 		}
 		data[0] = '\0';
 
@@ -189,26 +226,24 @@ dnd_convert_cb(Widget w, XtPointer client_data, XtPointer call_data)
 			strcat(data, ctx->paths[i]);
 		}
 
-		cs->type = XA_TEXT_URI_LIST;
-		cs->format = 8;
-		cs->length = strlen(data);
-		cs->value = data;
-		cs->status = XmCONVERT_DONE;
+		*type = XA_TEXT_URI_LIST;
+		*format = 8;
+		*length = strlen(data);
+		*value = data;
+		return True;
 
-	} else if(cs->target == XA_STRING || cs->target == XA_UTF8_STRING) {
+	} else if(*target == XA_STRING || *target == XA_UTF8_STRING) {
 		len = 0;
 		for(i = 0; i < ctx->num_items; i++) {
 			len += strlen(ctx->paths[i]) + 1;
 		}
 		if(len == 0) {
-			cs->status = XmCONVERT_REFUSE;
-			return;
+			return False;
 		}
 
 		data = XtMalloc(len + 1);
 		if(!data) {
-			cs->status = XmCONVERT_REFUSE;
-			return;
+			return False;
 		}
 		data[0] = '\0';
 
@@ -217,46 +252,43 @@ dnd_convert_cb(Widget w, XtPointer client_data, XtPointer call_data)
 			strcat(data, ctx->paths[i]);
 		}
 
-		if(cs->target == XA_STRING)
+		if(*target == XA_STRING)
 			mbs_to_latin1(data, data);
 
-		cs->type = cs->target;
-		cs->format = 8;
-		cs->length = strlen(data);
-		cs->value = data;
-		cs->status = XmCONVERT_DONE;
+		*type = *target;
+		*format = 8;
+		*length = strlen(data);
+		*value = data;
+		return True;
 
-	} else if(cs->target == XA_FILE_NAME) {
+	} else if(*target == XA_FILE_NAME) {
 		if(ctx->num_items == 0) {
-			cs->status = XmCONVERT_REFUSE;
-			return;
+			return False;
 		}
+
 		data = XtMalloc(strlen(ctx->paths[0]) + 1);
 		if(!data) {
-			cs->status = XmCONVERT_REFUSE;
-			return;
+			return False;
 		}
 		strcpy(data, ctx->paths[0]);
 
-		cs->type = XA_FILE_NAME;
-		cs->format = 8;
-		cs->length = strlen(data);
-		cs->value = data;
-		cs->status = XmCONVERT_DONE;
+		*type = XA_FILE_NAME;
+		*format = 8;
+		*length = strlen(data);
+		*value = data;
+		return True;
 
-	} else if(cs->target == XA_XFILE_FILE_LIST) {
+	} else if(*target == XA_XFILE_FILE_LIST) {
 		char *path;
 		char *pos;
 
 		if(!ctx->dir_path || ctx->num_items == 0) {
-			cs->status = XmCONVERT_REFUSE;
-			return;
+			return False;
 		}
 
 		path = realpath(ctx->dir_path, NULL);
 		if(!path) {
-			cs->status = XmCONVERT_REFUSE;
-			return;
+			return False;
 		}
 
 		len = strlen(path) + 1;
@@ -267,8 +299,7 @@ dnd_convert_cb(Widget w, XtPointer client_data, XtPointer call_data)
 		data = XtMalloc(len + 1);
 		if(!data) {
 			free(path);
-			cs->status = XmCONVERT_REFUSE;
-			return;
+			return False;
 		}
 
 		strcpy(data, path);
@@ -283,15 +314,14 @@ dnd_convert_cb(Widget w, XtPointer client_data, XtPointer call_data)
 		}
 		*pos = '\0';
 
-		cs->type = XA_XFILE_FILE_LIST;
-		cs->format = 8;
-		cs->length = len + 1;
-		cs->value = data;
-		cs->status = XmCONVERT_DONE;
-
-	} else {
-		cs->status = XmCONVERT_REFUSE;
+		*type = XA_XFILE_FILE_LIST;
+		*format = 8;
+		*length = len + 1;
+		*value = data;
+		return True;
 	}
+
+	return False;
 }
 
 static void
@@ -309,23 +339,33 @@ dnd_operation_changed_cb(Widget w, XtPointer client_data, XtPointer call_data)
 }
 
 static void
-dnd_drag_finish_cb(Widget w, XtPointer client_data, XtPointer call_data)
+dnd_cleanup_cb(XtPointer client_data, XtIntervalId *id)
 {
 	struct dnd_drag_context *ctx = (struct dnd_drag_context*)client_data;
-	struct file_list_part *fl;
+	unsigned int i;
+	Widget icon;
 
-	(void)w;
-	(void)call_data;
+	(void)id;
 
-	if(ctx == NULL) return;
+	if(ctx == NULL) {
+		return;
+	}
 
-	if(ctx->drag_icon != NULL) {
-		XtDestroyWidget(ctx->drag_icon);
-		ctx->drag_icon = NULL;
+
+	/* The drag icon widget created by XmCreateDragIcon is owned by
+	 * XFile, not by Motif's drag context.  Delay its destruction long
+	 * enough that Motif has finished all X server interactions using
+	 * the icon's pixmaps (including the final drag-drop finish and any
+	 * deferred cursor repaints), then destroy it to avoid leaving a
+	 * persistent drag cursor on screen. */
+	icon = ctx->drag_icon;
+	ctx->drag_icon = NULL;
+	if(icon != NULL && XtIsWidget(icon)) {
+		XtDestroyWidget(icon);
+	} else {
 	}
 
 	if(ctx->paths != NULL) {
-		unsigned int i;
 		for(i = 0; i < ctx->num_items; i++) {
 			if(ctx->paths[i] != NULL) XtFree(ctx->paths[i]);
 		}
@@ -333,7 +373,6 @@ dnd_drag_finish_cb(Widget w, XtPointer client_data, XtPointer call_data)
 	}
 
 	if(ctx->names != NULL) {
-		unsigned int i;
 		for(i = 0; i < ctx->num_items; i++) {
 			if(ctx->names[i] != NULL) XtFree(ctx->names[i]);
 		}
@@ -342,12 +381,34 @@ dnd_drag_finish_cb(Widget w, XtPointer client_data, XtPointer call_data)
 
 	if(ctx->dir_path != NULL) XtFree(ctx->dir_path);
 
+	XtFree((char*)ctx);
+}
+
+static void
+dnd_drag_finish_cb(Widget w, XtPointer client_data, XtPointer call_data)
+{
+	struct dnd_drag_context *ctx = (struct dnd_drag_context*)client_data;
+	struct file_list_part *fl;
+
+	(void)w;
+	(void)call_data;
+
+	xdnd_end_drag();
+
+	if(ctx == NULL) return;
+
 	if(ctx->source_widget != NULL) {
 		fl = FL_PART(ctx->source_widget);
 		if(fl != NULL) fl->dnd_state = DND_NONE;
 	}
 
-	XtFree((char*)ctx);
+	/* Defer all cleanup until Motif has finished with the drag context
+	 * and any pending selection conversions.  A 5000ms delay gives
+	 * the X server time to finish all cursor/selection bookkeeping,
+	 * which avoids BadDrawable errors when the drag icon widget is
+	 * destroyed after a successful drop or an ESC cancel. */
+	XtAppAddTimeOut(XtWidgetToApplicationContext(w),
+		5000, dnd_cleanup_cb, (XtPointer)ctx);
 }
 
 static void __attribute__((unused))
@@ -365,14 +426,11 @@ dnd_drag_end_cb(Widget w, XtPointer client_data, XtPointer call_data)
 	}
 }
 
-static void
-dnd_realize_cb(Widget w, XtPointer client_data, XtPointer call_data)
+void
+dnd_register_drop_site(Widget wlist)
 {
 	Arg args[8];
 	Cardinal n = 0;
-
-	(void)client_data;
-	(void)call_data;
 
 	XtSetArg(args[n], XmNdropSiteOperations, DND_DROP_OPS); n++;
 	XtSetArg(args[n], XmNimportTargets, dnd_import_targets); n++;
@@ -380,21 +438,9 @@ dnd_realize_cb(Widget w, XtPointer client_data, XtPointer call_data)
 	XtSetArg(args[n], XmNdropProc, dnd_drop_cb); n++;
 	XtSetArg(args[n], XmNdragProc, dnd_drag_site_cb); n++;
 
-	XmDropSiteRegister(w, args, n);
-
-	/* One-shot: remove callback after registration */
-	XtRemoveCallback(w, XmNrealizeCallback, dnd_realize_cb, NULL);
+	XmDropSiteRegister(wlist, args, n);
 }
 
-void
-dnd_register_drop_site(Widget wlist)
-{
-	if(XtIsRealized(wlist)) {
-		dnd_realize_cb(wlist, NULL, NULL);
-	} else {
-		XtAddCallback(wlist, XmNrealizeCallback, dnd_realize_cb, NULL);
-	}
-}
 
 void
 dnd_init(Widget wlist)
@@ -405,6 +451,8 @@ dnd_init(Widget wlist)
 	XA_FILE_NAME = XmInternAtom(dpy, XmSFILE_NAME, False);
 	XA_XFILE_FILE_LIST = XInternAtom(dpy, CS_FILE_LIST, False);
 	XA_UTF8_STRING = XInternAtom(dpy, "UTF8_STRING", False);
+	XA_TARGETS = XInternAtom(dpy, "TARGETS", False);
+	XA_TIMESTAMP = XInternAtom(dpy, "TIMESTAMP", False);
 
 	dnd_export_targets[0] = XA_TEXT_URI_LIST;
 	dnd_export_targets[1] = XA_FILE_NAME;
@@ -439,10 +487,16 @@ dnd_start_drag(Widget w, XEvent *event)
 	Widget drag_context;
 	Widget drag_icon = NULL;
 
-	if(!fl->drag_and_drop) return;
+
+	if(!fl->drag_and_drop) {
+		return;
+	}
 
 	sel = file_list_get_selection(w);
-	if(sel == NULL || sel->count == 0) return;
+	if(sel == NULL || sel->count == 0) {
+		return;
+	}
+
 
 	ctx = (struct dnd_drag_context*)XtMalloc(
 		sizeof(struct dnd_drag_context));
@@ -452,6 +506,14 @@ dnd_start_drag(Widget w, XEvent *event)
 	ctx->source_widget = w;
 	ctx->num_items = sel->count;
 	ctx->dir_path = dnd_dir_path_from_widget(w);
+	if(event != NULL) {
+		if(event->type == ButtonPress || event->type == ButtonRelease ||
+			event->type == MotionNotify) {
+			ctx->start_time = event->xbutton.time;
+		} else if(event->type == KeyPress || event->type == KeyRelease) {
+			ctx->start_time = event->xkey.time;
+		}
+	}
 
 	ctx->names = (char**)XtMalloc(sizeof(char*) * sel->count);
 	ctx->paths = (char**)XtMalloc(sizeof(char*) * sel->count);
@@ -480,27 +542,47 @@ dnd_start_drag(Widget w, XEvent *event)
 	}
 	ctx->operation = operation;
 
+
 	if(sel->item.icon != None) {
 		drag_icon = dnd_create_drag_icon(w, sel->item.icon,
 			sel->item.icon_mask);
 	}
 	ctx->drag_icon = drag_icon;
 
+
+	XtCallbackRec drag_finish_rec[2];
+	drag_finish_rec[0].callback = dnd_drag_finish_cb;
+	drag_finish_rec[0].closure = (XtPointer)ctx;
+	drag_finish_rec[1].callback = NULL;
+	drag_finish_rec[1].closure = NULL;
+
+	XtCallbackRec op_changed_rec[2];
+	op_changed_rec[0].callback = dnd_operation_changed_cb;
+	op_changed_rec[0].closure = (XtPointer)ctx;
+	op_changed_rec[1].callback = NULL;
+	op_changed_rec[1].closure = NULL;
+
+	XtSetArg(args[n], XmNconvertProc, dnd_convert_proc); n++;
 	XtSetArg(args[n], XmNexportTargets, dnd_export_targets); n++;
 	XtSetArg(args[n], XmNnumExportTargets, DND_NUM_EXPORT_TARGETS); n++;
 	XtSetArg(args[n], XmNdragOperations, DND_DRAG_OPS); n++;
-	XtSetArg(args[n], XmNconvertCallback, dnd_convert_cb); n++;
-	XtSetArg(args[n], XmNdragDropFinishCallback, dnd_drag_finish_cb); n++;
-	XtSetArg(args[n], XmNclientData, (XtPointer)ctx); n++;
 	if(drag_icon != NULL) {
 		XtSetArg(args[n], XmNsourceCursorIcon, drag_icon); n++;
 	}
+	XtSetArg(args[n], XmNclientData, (XtPointer)ctx); n++;
+	XtSetArg(args[n], XmNdragDropFinishCallback,
+		(XtCallbackList)drag_finish_rec); n++;
+	XtSetArg(args[n], XmNoperationChangedCallback,
+		(XtCallbackList)op_changed_rec); n++;
 
 	drag_context = XmDragStart(w, event, args, n);
-	if(drag_context == NULL) goto fail;
+	if(drag_context == NULL) {
+		goto fail;
+	}
 
-	XtAddCallback(drag_context, XmNoperationChangedCallback,
-		dnd_operation_changed_cb, (XtPointer)ctx);
+	if(drag_context != NULL) {
+		xdnd_start_drag(w, event, (XtPointer)ctx);
+	}
 
 	fl->dnd_state = DND_DRAG;
 	return;
@@ -610,6 +692,7 @@ dnd_drag_site_cb(Widget w, XtPointer client, XtPointer call)
 
 	if(ds == NULL) return;
 
+
 	switch(ds->reason) {
 		case XmCR_DROP_SITE_ENTER_MESSAGE:
 			dnd_update_highlight(w, ds->x, ds->y);
@@ -663,7 +746,11 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 
 	(void)client;
 
-	if(dropInfo == NULL) return;
+
+	if(dropInfo == NULL) {
+		return;
+	}
+
 
 	if(dropInfo->dropAction == XmDROP_HELP) {
 		XtSetArg(args[0], XmNtransferStatus, XmTRANSFER_FAILURE);
@@ -690,6 +777,7 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 		src_ctx = (struct dnd_drag_context*)cd;
 	}
 
+
 	source_dir = NULL;
 	if(src_ctx != NULL && src_ctx->source_widget != NULL
 		&& XtIsWidget(src_ctx->source_widget)
@@ -709,12 +797,8 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 
 	if(source_dir != NULL) free(source_dir);
 
-	if(src_ctx != NULL && src_ctx->source_widget != NULL
-		&& XtIsWidget(src_ctx->source_widget)
-		&& src_ctx->source_widget == w)
-		target = XA_XFILE_FILE_LIST;
-	else
-		target = XA_TEXT_URI_LIST;
+	target = XA_TEXT_URI_LIST;
+
 
 	td = (struct dnd_transfer_data*)malloc(sizeof(*td));
 	if(!td) {
@@ -732,6 +816,7 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 		entry.client_data = (XtPointer)td;
 		entry.target = target;
 
+
 		XtSetArg(args[n], XmNdropTransfers, &entry); n++;
 		XtSetArg(args[n], XmNnumDropTransfers, 1); n++;
 		XtSetArg(args[n], XmNtransferProc, dnd_transfer_cb); n++;
@@ -744,20 +829,25 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 		free(td);
 		XtSetArg(args[0], XmNtransferStatus, XmTRANSFER_FAILURE);
 		XtSetValues(w, args, 1);
+	} else {
 	}
 }
 
 static void
-dnd_transfer_cb(Widget w, XtPointer client, XtPointer call)
+dnd_transfer_cb(Widget w, XtPointer client_data,
+	Atom *selection, Atom *type, XtPointer value,
+	unsigned long *length, int *format)
 {
-	XmSelectionCallbackStruct *ts = (XmSelectionCallbackStruct*)call;
-	struct dnd_transfer_data *td = (struct dnd_transfer_data*)client;
+	struct dnd_transfer_data *td = (struct dnd_transfer_data*)client_data;
 	char *dest_dir;
 	unsigned char operation;
 
 	(void)w;
+	(void)selection;
+	(void)format;
 
-	if(ts == NULL) {
+
+	if(type == NULL || length == NULL) {
 		if(td) {
 			free(td->dest_dir);
 			free(td);
@@ -765,11 +855,12 @@ dnd_transfer_cb(Widget w, XtPointer client, XtPointer call)
 		return;
 	}
 
+
 	dest_dir = td->dest_dir;
 	operation = td->operation;
 	free(td);
 
-	if(ts->target == XA_TEXT_URI_LIST) {
+	if(*type == XA_TEXT_URI_LIST) {
 		char *data;
 		char *line;
 		char *next;
@@ -778,17 +869,17 @@ dnd_transfer_cb(Widget w, XtPointer client, XtPointer call)
 		unsigned int i;
 		char *src_dir;
 
-		if(ts->value == NULL || ts->length == 0) {
+		if(value == NULL || *length == 0) {
 			free(dest_dir);
 			return;
 		}
-		data = XtMalloc(ts->length + 1);
+		data = XtMalloc(*length + 1);
 		if(!data) {
 			free(dest_dir);
 			return;
 		}
-		memcpy(data, ts->value, ts->length);
-		data[ts->length] = '\0';
+		memcpy(data, value, *length);
+		data[*length] = '\0';
 
 		for(count = 0, line = data; *line; ) {
 			if(*line == '#' || *line == '\r' || *line == '\n') {
@@ -860,8 +951,8 @@ dnd_transfer_cb(Widget w, XtPointer client, XtPointer call)
 		XtFree((char*)paths);
 		XtFree(data);
 
-	} else if(ts->target == XA_XFILE_FILE_LIST) {
-		char *value;
+	} else if(*type == XA_XFILE_FILE_LIST) {
+		char *val;
 		char *ptr;
 		char *sb;
 		char **list;
@@ -869,18 +960,18 @@ dnd_transfer_cb(Widget w, XtPointer client, XtPointer call)
 		size_t len;
 		char *src_dir;
 
-		if(ts->value == NULL || ts->length == 0) {
+		if(value == NULL || *length == 0) {
 			free(dest_dir);
 			return;
 		}
-		value = (char*)ts->value;
+		val = (char*)value;
 
-		len = ts->length;
-		ptr = value;
+		len = *length;
+		ptr = val;
 		for(n = 0; ; ) {
-			if((size_t)(ptr - value) >= len || ptr[0] == '\0') {
+			if((size_t)(ptr - val) >= len || ptr[0] == '\0') {
 				n++;
-				if((size_t)(ptr - value) + 1 >= len || ptr[1] == '\0')
+				if((size_t)(ptr - val) + 1 >= len || ptr[1] == '\0')
 					break;
 			}
 			ptr++;
@@ -897,14 +988,14 @@ dnd_transfer_cb(Widget w, XtPointer client, XtPointer call)
 			return;
 		}
 
-		ptr = value;
+		ptr = val;
 		sb = ptr;
 		for(i = 0; ; ) {
-			if((size_t)(ptr - value) >= len || ptr[0] == '\0') {
+			if((size_t)(ptr - val) >= len || ptr[0] == '\0') {
 				list[i] = sb;
 				i++;
 				sb = ptr + 1;
-				if((size_t)(ptr - value) + 1 >= len || ptr[1] == '\0')
+				if((size_t)(ptr - val) + 1 >= len || ptr[1] == '\0')
 					break;
 			}
 			ptr++;
@@ -918,9 +1009,11 @@ dnd_transfer_cb(Widget w, XtPointer client, XtPointer call)
 			dnd_perform_operation(src_dir, list + 1, n, dest_dir,
 				operation);
 			free(src_dir);
+		} else {
 		}
 
 		XtFree((char*)list);
+	} else {
 	}
 
 	free(dest_dir);

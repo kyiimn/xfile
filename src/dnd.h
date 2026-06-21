@@ -15,6 +15,9 @@ extern Atom XA_TEXT_URI_LIST;
 extern Atom XA_FILE_NAME;
 extern Atom XA_XFILE_FILE_LIST;
 extern Atom XA_UTF8_STRING;
+extern Atom XA_TARGETS;
+extern Atom XA_TIMESTAMP;
+
 
 /* Target atom arrays for drag source export and drop site import */
 extern Atom dnd_export_targets[];
@@ -22,6 +25,18 @@ extern Atom dnd_import_targets[];
 
 #define DND_NUM_EXPORT_TARGETS 4
 #define DND_NUM_IMPORT_TARGETS 4
+
+/* Drag context shared between Motif DnD and XDnD source paths */
+struct dnd_drag_context {
+	Widget source_widget;
+	unsigned int num_items;
+	char **paths;
+	unsigned char operation;
+	Widget drag_icon;
+	char *dir_path;
+	char **names;
+	Time start_time;
+};
 
 /* Drag source operation mask (XmDROP_COPY | XmDROP_MOVE) */
 #define DND_DRAG_OPS (XmDROP_COPY | XmDROP_MOVE)

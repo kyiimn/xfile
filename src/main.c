@@ -44,6 +44,7 @@
 #include "select.h"
 #include "xdgopen.h"
 #include "dnd.h"
+#include "xdnd.h"
 #include "debug.h"
 
 /* Icon bitmaps */
@@ -513,6 +514,7 @@ static void create_main_window(void)
 	XmScrolledWindowSetAreas(wscrolled, whscrl, wvscrl, app_inst.wlist);
 	
 	dnd_init(app_inst.wlist);
+	xdnd_init(XtDisplay(app_inst.wlist));
 	
 	/* list popup wants app_inst.wlist, so create menus at last */
 	create_main_menus();
@@ -732,6 +734,7 @@ static void window_close_cb(Widget w, XtPointer client, XtPointer call)
 {
 	if(app_inst.wshell) stop_read_proc();
 	
+	xdnd_destroy();
 	xdg_open_cleanup();
 	
 	if(app_inst.num_sub_shells) {
