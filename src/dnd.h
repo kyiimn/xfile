@@ -26,8 +26,11 @@ extern Atom dnd_import_targets[];
 #define DND_NUM_EXPORT_TARGETS 4
 #define DND_NUM_IMPORT_TARGETS 4
 
+#define DND_CTX_MAGIC 0xDAD1
+
 /* Drag context shared between Motif DnD and XDnD source paths */
 struct dnd_drag_context {
+	unsigned int magic;
 	Widget source_widget;
 	unsigned int num_items;
 	char **paths;
@@ -36,6 +39,8 @@ struct dnd_drag_context {
 	char *dir_path;
 	char **names;
 	Time start_time;
+	XtCallbackRec drag_finish_rec[2];
+	XtCallbackRec op_changed_rec[2];
 };
 
 /* Drag source operation mask (XmDROP_COPY | XmDROP_MOVE) */

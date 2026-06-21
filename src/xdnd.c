@@ -15,9 +15,18 @@
 #include <Xm/XmP.h>
 #include <Xm/DragDrop.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdint.h>
 #include "xdnd.h"
 #include "dnd.h"
 #include "mbstr.h"
+
+#define XDND_DEBUG 0
+#if XDND_DEBUG
+#define xdnd_dbg(fmt,...) fprintf(stderr, "[XDnD] " fmt, ##__VA_ARGS__)
+#else
+#define xdnd_dbg(fmt,...) ((void)0)
+#endif
 
 #define XDND_PROTOCOL_VERSION 5
 #define XDND_NUM_TYPES 4
@@ -54,7 +63,6 @@ struct xdnd_session {
 	/* Copied path data, independent of Motif drag context lifetime */
 	unsigned int num_items;
 	char **paths;
-	char **names;
 	char *dir_path;
 	unsigned char operation;
 
@@ -66,7 +74,6 @@ struct xdnd_session {
 	Bool got_status;
 	Atom status_action;
 	Bool drop_sent;
-	Bool finished;
 	Bool pointer_grabbed;
 	Bool left_sent;
 
@@ -169,23 +176,13 @@ xdnd_copy_paths(struct xdnd_session *s, struct dnd_drag_context *ctx)
 	if(ctx->num_items == 0) return;
 
 	s->paths = (char**)XtMalloc(sizeof(char*) * ctx->num_items);
-	s->names = (char**)XtMalloc(sizeof(char*) * ctx->num_items);
-	if(!s->paths || !s->names) {
-		if(s->paths) {
-			XtFree((char*)s->paths);
-			s->paths = NULL;
-		}
-		if(s->names) {
-			XtFree((char*)s->names);
-			s->names = NULL;
-		}
+	if(!s->paths) {
 		s->num_items = 0;
 		return;
 	}
 
 	for(i = 0; i < ctx->num_items; i++) {
 		s->paths[i] = NULL;
-		s->names[i] = NULL;
 	}
 
 	for(i = 0; i < ctx->num_items; i++) {
@@ -193,11 +190,6 @@ xdnd_copy_paths(struct xdnd_session *s, struct dnd_drag_context *ctx)
 			s->paths[i] = XtMalloc(strlen(ctx->paths[i]) + 1);
 			if(s->paths[i] != NULL)
 				strcpy(s->paths[i], ctx->paths[i]);
-		}
-		if(ctx->names[i] != NULL) {
-			s->names[i] = XtMalloc(strlen(ctx->names[i]) + 1);
-			if(s->names[i] != NULL)
-				strcpy(s->names[i], ctx->names[i]);
 		}
 	}
 }
@@ -224,6 +216,12 @@ xdnd_start_drag(Widget source, XEvent *event, XtPointer drag_context)
 	if(!XtIsRealized(source)) return;
 	if(xdnd_display == NULL) return;
 
+	/* Prevent re-entry if a session is already active */
+	if(session != NULL) {
+		xdnd_dbg("start_drag: session already active, skipping\n");
+		return;
+	}
+
 	dpy = xdnd_display;
 	ctx = (struct dnd_drag_context*)drag_context;
 	source_window = XtWindow(source);
@@ -231,6 +229,9 @@ xdnd_start_drag(Widget source, XEvent *event, XtPointer drag_context)
 	s = (struct xdnd_session*)XtMalloc(sizeof(struct xdnd_session));
 	if(!s) return;
 	memset(s, 0, sizeof(struct xdnd_session));
+
+	xdnd_dbg("start_drag: source_window=0x%lx, num_items=%u, operation=%u\n",
+		(unsigned long)source_window, ctx->num_items, (unsigned)ctx->operation);
 
 	s->source_widget = source;
 	s->source_window = source_window;
@@ -274,6 +275,12 @@ xdnd_start_drag(Widget source, XEvent *event, XtPointer drag_context)
 		ButtonMotionMask | ButtonReleaseMask | PointerMotionMask,
 		GrabModeAsync, GrabModeAsync, None, None, start_time);
 	s->pointer_grabbed = (grab_status == GrabSuccess) ? True : False;
+	xdnd_dbg("start_drag: XGrabPointer status=%d (%s)\n",
+		grab_status, grab_status == GrabSuccess ? "Success" :
+		grab_status == AlreadyGrabbed ? "AlreadyGrabbed" :
+		grab_status == GrabInvalidTime ? "InvalidTime" :
+		grab_status == GrabNotViewable ? "NotViewable" :
+		grab_status == GrabFrozen ? "Frozen" : "Unknown");
 
 	s->track_proc = XtAppAddWorkProc(
 		XtWidgetToApplicationContext(source),
@@ -284,6 +291,8 @@ xdnd_start_drag(Widget source, XEvent *event, XtPointer drag_context)
 	s->timeout_timer = XtAppAddTimeOut(
 		XtWidgetToApplicationContext(source),
 		XDND_SESSION_TIMEOUT_MS, xdnd_timeout_cb, (XtPointer)s);
+
+	xdnd_dbg("start_drag: session initialized, track_proc=%p\n", (void*)s->track_proc);
 
 	session = s;
 }
@@ -300,13 +309,6 @@ xdnd_free_session(struct xdnd_session *s)
 			if(s->paths[i] != NULL) XtFree(s->paths[i]);
 		}
 		XtFree((char*)s->paths);
-	}
-
-	if(s->names != NULL) {
-		for(i = 0; i < s->num_items; i++) {
-			if(s->names[i] != NULL) XtFree(s->names[i]);
-		}
-		XtFree((char*)s->names);
 	}
 
 	if(s->dir_path != NULL) XtFree(s->dir_path);
@@ -391,8 +393,8 @@ xdnd_send_position(struct xdnd_session *s, Window target,
 
 	data[0] = s->source_window;
 	data[1] = 0;
-	data[2] = ((unsigned long)root_x << 16) |
-		((unsigned long)root_y & 0xFFFF);
+	data[2] = (((unsigned long)(root_x & 0xFFFF)) << 16) |
+		((unsigned long)(root_y & 0xFFFF));
 	data[3] = s->start_time;
 	data[4] = xdnd_default_action(s);
 
@@ -438,6 +440,8 @@ xdnd_handle_status(struct xdnd_session *s, XClientMessageEvent *e)
 
 	s->got_status = True;
 	s->status_action = e->data.l[4];
+	xdnd_dbg("handle_status: action=%lu, accept_bit=%d\n",
+		(unsigned long)s->status_action, (int)(e->data.l[1] & 0x1));
 }
 
 static void
@@ -445,7 +449,8 @@ xdnd_handle_finished(struct xdnd_session *s)
 {
 	if(s == NULL) return;
 
-	s->finished = True;
+	xdnd_dbg("handle_finished: received XdndFinished\n");
+
 	s->drop_sent = True;
 
 	XtDisownSelection(s->source_widget, XA_XDND_SELECTION, CurrentTime);
@@ -538,6 +543,9 @@ xdnd_process_client_messages(struct xdnd_session *s)
 			xdnd_handle_status(s, cm);
 		} else if(cm->message_type == XA_XDND_FINISHED) {
 			xdnd_handle_finished(s);
+		} else {
+			XPutBackEvent(dpy, &ev);
+			break;
 		}
 	}
 }
@@ -563,19 +571,26 @@ xdnd_track_drag(XtPointer client_data)
 
 	xdnd_process_client_messages(s);
 
-	if(!XQueryPointer(dpy, s->source_window, &root, &child,
+	if(!XQueryPointer(dpy, root, &root, &child,
 		&root_x, &root_y, &win_x, &win_y, &mask)) {
 		return False;
 	}
 
+	target = xdnd_find_target(dpy, root, root_x, root_y);
+
 	if(!(mask & (Button1Mask | Button2Mask | Button3Mask))) {
-		/* Button released */
+		xdnd_dbg("track_drag: button released, last_target=0x%lx, got_status=%d, status_action=%lu, drop_sent=%d\n",
+			(unsigned long)s->last_target, s->got_status,
+			(unsigned long)s->status_action, s->drop_sent);
 		if(s->last_target != None && s->got_status &&
 			s->status_action != None &&
 			s->status_action != XA_XDND_ACTION_PRIVATE) {
 			if(!s->drop_sent) {
 				s->drop_sent = True;
+				xdnd_dbg("track_drag: sending drop to target 0x%lx\n",
+					(unsigned long)s->last_target);
 				xdnd_send_drop(s, s->last_target);
+				xdnd_dbg("track_drag: owning selection for drop\n");
 				XtOwnSelection(s->source_widget, XA_XDND_SELECTION,
 					s->start_time, xdnd_convert_selection,
 					xdnd_lose_selection, NULL);
@@ -591,11 +606,6 @@ xdnd_track_drag(XtPointer client_data)
 		 * messages and eventually call xdnd_end_drag(). */
 		s->track_proc = 0;
 		return True;
-	}
-
-	target = child;
-	if(target == None) {
-		target = xdnd_find_target(dpy, root, root_x, root_y);
 	}
 
 	if(target == s->source_window || target == None) {
@@ -615,6 +625,8 @@ xdnd_track_drag(XtPointer client_data)
 
 	if(target != s->last_target) {
 		if(s->last_target != None && !s->left_sent) {
+			xdnd_dbg("track_drag: sending leave to old target 0x%lx\n",
+				(unsigned long)s->last_target);
 			xdnd_send_leave(s, s->last_target);
 		}
 		s->last_target = None;
@@ -623,6 +635,8 @@ xdnd_track_drag(XtPointer client_data)
 		s->left_sent = False;
 
 		version = xdnd_get_target_version(target);
+		xdnd_dbg("track_drag: new target=0x%lx, version=%d\n",
+			(unsigned long)target, version);
 		if(version >= 3) {
 			xdnd_send_enter(s, target, version);
 			s->last_target = target;
@@ -652,6 +666,8 @@ xdnd_end_drag(void)
 	if(session == NULL) return;
 
 	s = session;
+	xdnd_dbg("end_drag: cleaning up session, source_window=0x%lx\n",
+		(unsigned long)s->source_window);
 	session = NULL;
 
 	if(s->track_proc != 0) {
@@ -676,14 +692,17 @@ xdnd_end_drag(void)
 		if(s->last_target != None && !s->left_sent && !s->drop_sent) {
 			xdnd_send_leave(s, s->last_target);
 		}
-
-		XDeleteProperty(s->display, s->source_window, XA_XDND_AWARE);
-		XDeleteProperty(s->display, s->source_window, XA_XDND_TYPELIST);
 	}
 
-	if(s->source_widget != NULL) {
+	/* Do NOT call XtDisownSelection here. Motif DnD still owns the
+	 * selection at this point and may need it for data transfer.
+	 * XtDisownSelection during an active Motif drag causes BadAtom
+	 * errors when Motif tries XConvertSelection with _XT_SELECTION_0.
+	 * The selection will be released when Motif calls dragFinishCallback
+	 * and the drag context is destroyed (5-second cleanup). */
+	if(s->drop_sent && s->source_widget != NULL) {
 		XtDisownSelection(s->source_widget, XA_XDND_SELECTION,
-			CurrentTime);
+			s->start_time);
 	}
 
 	xdnd_free_session(s);
@@ -705,42 +724,49 @@ xdnd_convert_selection(Widget w, Atom *selection, Atom *target,
 	unsigned int i;
 	char *data;
 	size_t len;
-	Atom *targets;
-	Atom *ts;
 
 	(void)w;
 	(void)selection;
 
 	s = session;
+
+	xdnd_dbg("convert_selection: target=%lu, session=%p\n",
+		(unsigned long)*target, (void*)s);
 	if(s == NULL || target == NULL || type_ret == NULL ||
 		value_ret == NULL || length_ret == NULL || format_ret == NULL) {
 		return False;
 	}
 
 	if(*target == XA_TARGETS) {
-		targets = (Atom*)XtMalloc(sizeof(Atom) * (XDND_NUM_TYPES + 2));
-		if(!targets) return False;
+		uint32_t *buf32;
+		unsigned int n;
+
+		n = XDND_NUM_TYPES + 2;
+		buf32 = (uint32_t*)XtMalloc(n * sizeof(uint32_t));
+		if(!buf32) return False;
 
 		for(i = 0; i < XDND_NUM_TYPES; i++)
-			targets[i] = s->supported_types[i];
-		targets[XDND_NUM_TYPES] = XA_TARGETS;
-		targets[XDND_NUM_TYPES + 1] = XA_TIMESTAMP;
+			buf32[i] = (uint32_t)s->supported_types[i];
+		buf32[XDND_NUM_TYPES] = (uint32_t)XA_TARGETS;
+		buf32[XDND_NUM_TYPES + 1] = (uint32_t)XA_TIMESTAMP;
 
 		*type_ret = XA_ATOM;
 		*format_ret = 32;
-		*length_ret = ((XDND_NUM_TYPES + 2) * sizeof(Atom)) / 4;
-		*value_ret = (XtPointer)targets;
+		*length_ret = (unsigned long)n;
+		*value_ret = (XtPointer)buf32;
 		return True;
 
 	} else if(*target == XA_TIMESTAMP) {
-		ts = (Atom*)XtMalloc(sizeof(unsigned long));
-		if(!ts) return False;
+		uint32_t *ts32;
 
-		*ts = (Atom)s->start_time;
+		ts32 = (uint32_t*)XtMalloc(sizeof(uint32_t));
+		if(!ts32) return False;
+
+		*ts32 = (uint32_t)s->start_time;
 		*type_ret = XA_INTEGER;
 		*format_ret = 32;
 		*length_ret = 1;
-		*value_ret = (XtPointer)ts;
+		*value_ret = (XtPointer)ts32;
 		return True;
 
 	} else if(*target == XA_TEXT_URI_LIST) {
