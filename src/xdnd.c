@@ -341,8 +341,9 @@ xdnd_get_target_version(Window target)
 	prop = NULL;
 
 	if(XGetWindowProperty(xdnd_display, target, XA_XDND_AWARE, 0, 1, False,
-		XA_CARDINAL, &type, &fmt, &nitems, &bytes, &prop) == Success) {
-		if(type == XA_CARDINAL && fmt == 32 && nitems >= 1 && prop) {
+		AnyPropertyType, &type, &fmt, &nitems, &bytes, &prop) == Success) {
+		if((type == XA_ATOM || type == XA_CARDINAL || type == XA_INTEGER)
+			&& fmt == 32 && nitems >= 1 && prop) {
 			version = (int)((unsigned long*)prop)[0];
 		}
 		if(prop) XFree(prop);
