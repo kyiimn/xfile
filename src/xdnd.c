@@ -21,7 +21,7 @@
 #include "dnd.h"
 #include "mbstr.h"
 
-#define XDND_DEBUG 1
+#define XDND_DEBUG 0
 #if XDND_DEBUG
 #define xdnd_dbg(fmt,...) fprintf(stderr, "[XDnD] " fmt, ##__VA_ARGS__)
 #else
@@ -242,6 +242,9 @@ xdnd_start_drag(Widget source, XEvent *event, XtPointer drag_context)
 		return;
 	}
 
+	/* XDnD source drag is currently disabled */
+	return;
+
 	dpy = xdnd_display;
 	ctx = (struct dnd_drag_context*)drag_context;
 	source_window = XtWindow(source);
@@ -295,12 +298,6 @@ xdnd_start_drag(Widget source, XEvent *event, XtPointer drag_context)
 		ButtonMotionMask | ButtonReleaseMask | PointerMotionMask,
 		GrabModeAsync, GrabModeAsync, None, None, start_time);
 	s->pointer_grabbed = (grab_status == GrabSuccess) ? True : False;
-	fprintf(stderr, "[XDnD] XGrabPointer status=%d (%s)\n",
-		grab_status, grab_status == GrabSuccess ? "Success" :
-		grab_status == AlreadyGrabbed ? "AlreadyGrabbed" :
-		grab_status == GrabInvalidTime ? "InvalidTime" :
-		grab_status == GrabNotViewable ? "NotViewable" :
-		grab_status == GrabFrozen ? "Frozen" : "Unknown");
 	xdnd_dbg("start_drag: XGrabPointer status=%d (%s)\n",
 		grab_status, grab_status == GrabSuccess ? "Success" :
 		grab_status == AlreadyGrabbed ? "AlreadyGrabbed" :
@@ -323,7 +320,6 @@ xdnd_start_drag(Widget source, XEvent *event, XtPointer drag_context)
 		XtAddEventHandler(s->source_widget, NoEventMask, True,
 			xdnd_client_message_handler, (XtPointer)s);
 		s->event_handler_installed = True;
-		fprintf(stderr, "[XDnD] start_drag: installed ClientMessage handler on source_widget\n");
 	}
 
 	xdnd_dbg("start_drag: session initialized, track_proc=%p\n", (void*)s->track_proc);
@@ -415,9 +411,6 @@ xdnd_send_enter(struct xdnd_session *s, Window target, int version)
 	data[3] = s->supported_types[1];
 	data[4] = s->supported_types[2];
 
-	fprintf(stderr, "[XDnD] send_enter: source=0x%lx target=0x%lx version=%d types=%lu %lu %lu\n",
-		(unsigned long)s->source_window, (unsigned long)target, version,
-		(unsigned long)data[2], (unsigned long)data[3], (unsigned long)data[4]);
 	xdnd_send_client_message(target, XA_XDND_ENTER, data);
 }
 
@@ -436,9 +429,6 @@ xdnd_send_position(struct xdnd_session *s, Window target,
 	data[3] = s->start_time;
 	data[4] = xdnd_default_action(s);
 
-	fprintf(stderr, "[XDnD] send_position: source=0x%lx target=0x%lx x=%d y=%d action=%lu\n",
-		(unsigned long)s->source_window, (unsigned long)target,
-		root_x, root_y, (unsigned long)data[4]);
 	xdnd_send_client_message(target, XA_XDND_POSITION, data);
 }
 
@@ -481,8 +471,6 @@ xdnd_handle_status(struct xdnd_session *s, XClientMessageEvent *e)
 
 	s->got_status = True;
 	s->status_action = e->data.l[4];
-	fprintf(stderr, "[XDnD] handle_status: action=%lu, accept_bit=%d, got_status=%d\n",
-		(unsigned long)s->status_action, (int)(e->data.l[1] & 0x1), s->got_status);
 	xdnd_dbg("handle_status: action=%lu, accept_bit=%d\n",
 		(unsigned long)s->status_action, (int)(e->data.l[1] & 0x1));
 }
@@ -492,7 +480,6 @@ xdnd_handle_finished(struct xdnd_session *s)
 {
 	if(s == NULL) return;
 
-	fprintf(stderr, "[XDnD] handle_finished: received XdndFinished\n");
 	xdnd_dbg("handle_finished: received XdndFinished\n");
 
 	s->drop_sent = True;
@@ -537,9 +524,6 @@ xdnd_find_target(Display *dpy, Window root, int root_x, int root_y)
 		child = new_child;
 	}
 
-	fprintf(stderr, "[XDnD] find_target: deepest=0x%lx\n",
-		(unsigned long)current);
-
 	return (current != None) ? current : root;
 }
 
@@ -572,11 +556,7 @@ xdnd_find_aware_ancestor(Display *dpy, Window start)
 
 		if(proxy != None) {
 			/* Proxy window found — check XdndAware on the proxy */
-			fprintf(stderr, "[XDnD] find_aware_ancestor: window 0x%lx has XdndProxy=0x%lx\n",
-				(unsigned long)walk, (unsigned long)proxy);
 			version = xdnd_get_target_version(proxy);
-			fprintf(stderr, "[XDnD] find_aware_ancestor: proxy 0x%lx version=%d\n",
-				(unsigned long)proxy, version);
 			if(version >= 3) return proxy;
 			/* Proxy exists but no XdndAware — keep walking up from proxy */
 			walk = proxy;
@@ -585,27 +565,18 @@ xdnd_find_aware_ancestor(Display *dpy, Window start)
 
 		/* No proxy — check XdndAware directly */
 		version = xdnd_get_target_version(walk);
-		fprintf(stderr, "[XDnD] find_aware_ancestor: checking window 0x%lx version=%d\n",
-			(unsigned long)walk, version);
 		if(version >= 3) return walk;
 
 		if(!XQueryTree(dpy, walk, &root, &parent, &children, &nchildren)) {
-			fprintf(stderr, "[XDnD] find_aware_ancestor: XQueryTree failed for 0x%lx\n",
-				(unsigned long)walk);
 			break;
 		}
 		if(children) XFree(children);
 
-		fprintf(stderr, "[XDnD] find_aware_ancestor: walk=0x%lx root=0x%lx parent=0x%lx\n",
-			(unsigned long)walk, (unsigned long)root, (unsigned long)parent);
 		if(parent == None || parent == root) {
-			fprintf(stderr, "[XDnD] find_aware_ancestor: stopping (parent==%s)\n",
-				parent == None ? "None" : "root");
 			break;
 		}
 		walk = parent;
 	}
-	fprintf(stderr, "[XDnD] find_aware_ancestor: returning None\n");
 	return None;
 }
 
@@ -625,9 +596,6 @@ xdnd_client_message_handler(Widget w, XtPointer client_data,
 	if(event->type != ClientMessage) return;
 
 	cm = (XClientMessageEvent *)event;
-
-	fprintf(stderr, "[XDnD] client_message_handler: type=%lu window=0x%lx\n",
-		(unsigned long)cm->message_type, (unsigned long)cm->window);
 
 	if(cm->message_type == XA_XDND_STATUS) {
 		xdnd_handle_status(s, cm);
@@ -650,7 +618,6 @@ xdnd_poll_timeout_cb(XtPointer client_data, XtIntervalId *id)
 
 	if(s->finish_requested && (s->drop_sent || s->left_sent)) {
 		xdnd_dbg("poll_timeout_cb: finish_requested and drop_sent, ending drag\n");
-		fprintf(stderr, "[XDnD] poll_timeout_cb: finish_requested and drop_sent, ending drag\n");
 		xdnd_end_drag();
 		return;
 	}
@@ -691,8 +658,6 @@ xdnd_process_client_messages(struct xdnd_session *s)
 		ClientMessage, &ev)) {
 		XClientMessageEvent *cm = (XClientMessageEvent*)&ev;
 
-		fprintf(stderr, "[XDnD] process_messages: type=%lu window=0x%lx\n",
-			(unsigned long)cm->message_type, (unsigned long)cm->window);
 		if(cm->message_type == XA_XDND_STATUS) {
 			xdnd_handle_status(s, cm);
 		} else if(cm->message_type == XA_XDND_FINISHED) {
@@ -734,8 +699,6 @@ xdnd_track_drag(XtPointer client_data)
 				s->drop_sent = True;
 				xdnd_dbg("track_drag: finish_requested, sending drop to 0x%lx\n",
 					(unsigned long)s->last_target);
-				fprintf(stderr, "[XDnD] track_drag: finish_requested, got_status, sending XdndDrop to 0x%lx\n",
-					(unsigned long)s->last_target);
 				xdnd_send_drop(s, s->last_target);
 				XtOwnSelection(s->source_widget, XA_XDND_SELECTION,
 					s->start_time, xdnd_convert_selection,
@@ -749,8 +712,6 @@ xdnd_track_drag(XtPointer client_data)
 			if(s->last_target != None && !s->left_sent) {
 				xdnd_dbg("track_drag: finish_requested, target rejected, sending leave to 0x%lx\n",
 					(unsigned long)s->last_target);
-				fprintf(stderr, "[XDnD] track_drag: finish_requested, target rejected, sending XdndLeave to target 0x%lx\n",
-					(unsigned long)s->last_target);
 				xdnd_send_leave(s, s->last_target);
 				s->left_sent = True;
 			}
@@ -761,7 +722,6 @@ xdnd_track_drag(XtPointer client_data)
 			 * The poll timer will continue calling this function.
 			 * xdnd_process_client_messages() will check for XdndStatus.
 			 * Timeout will eventually clean up if no response. */
-			fprintf(stderr, "[XDnD] track_drag: finish_requested, waiting for XdndStatus...\n");
 			/* Don't remove work proc -- keep checking for status */
 			return False;
 		}
@@ -778,14 +738,9 @@ xdnd_track_drag(XtPointer client_data)
 		xdnd_dbg("track_drag: button released, last_target=0x%lx, got_status=%d, status_action=%lu, drop_sent=%d\n",
 			(unsigned long)s->last_target, s->got_status,
 			(unsigned long)s->status_action, s->drop_sent);
-		fprintf(stderr, "[XDnD] track_drag: button released, last_target=0x%lx, got_status=%d, status_action=%lu, drop_sent=%d\n",
-			(unsigned long)s->last_target, s->got_status,
-			(unsigned long)s->status_action, s->drop_sent);
 		if(s->last_target != None && s->got_status &&
 			s->status_action != None &&
 			s->status_action != XA_XDND_ACTION_PRIVATE) {
-			fprintf(stderr, "[XDnD] track_drag: sending XdndDrop to target 0x%lx\n",
-				(unsigned long)s->last_target);
 			if(!s->drop_sent) {
 				s->drop_sent = True;
 				xdnd_dbg("track_drag: sending drop to target 0x%lx\n",
@@ -798,8 +753,6 @@ xdnd_track_drag(XtPointer client_data)
 			}
 		} else {
 			if(s->last_target != None && !s->left_sent) {
-				fprintf(stderr, "[XDnD] track_drag: sending XdndLeave to target 0x%lx\n",
-					(unsigned long)s->last_target);
 				xdnd_send_leave(s, s->last_target);
 				s->left_sent = True;
 			}
@@ -838,14 +791,10 @@ xdnd_track_drag(XtPointer client_data)
 		s->left_sent = False;
 
 		version = xdnd_get_target_version(target);
-		fprintf(stderr, "[XDnD] track_drag: target=0x%lx, version=%d\n",
-			(unsigned long)target, version);
 		if(version < 3) {
 			Window aware_win = xdnd_find_aware_ancestor(dpy, target);
 			if(aware_win != None) {
 				int ver = xdnd_get_target_version(aware_win);
-				fprintf(stderr, "[XDnD] track_drag: found _XdndAware on ancestor 0x%lx version=%d\n",
-					(unsigned long)aware_win, ver);
 				target = aware_win;
 				version = ver;
 			}
@@ -861,8 +810,6 @@ xdnd_track_drag(XtPointer client_data)
 			/* Target doesn't support XDnD. If we were tracking a previous
 			 * target, send leave. Reset tracking state. */
 			if(s->last_target != None && !s->left_sent) {
-				fprintf(stderr, "[XDnD] track_drag: target not XDnD aware, sending leave to 0x%lx\n",
-					(unsigned long)s->last_target);
 				xdnd_send_leave(s, s->last_target);
 				s->left_sent = True;
 			}
@@ -899,7 +846,6 @@ xdnd_end_drag(void)
 		XtRemoveEventHandler(s->source_widget, NoEventMask, True,
 			xdnd_client_message_handler, (XtPointer)s);
 		s->event_handler_installed = False;
-		fprintf(stderr, "[XDnD] end_drag: removed ClientMessage handler from source_widget\n");
 	}
 
 	if(s->track_proc != 0) {

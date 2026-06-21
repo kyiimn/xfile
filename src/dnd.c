@@ -205,20 +205,9 @@ dnd_convert_proc(Widget w, Atom *selection, Atom *target,
 
 	(void)selection;
 
-	fprintf(stderr, "[DND] convert_proc: target=%ld (%s) widget=%s\n",
-		target ? (long)*target : 0,
-		target && *target == XA_TEXT_URI_LIST ? "text/uri-list" :
-		target && *target == XA_XFILE_FILE_LIST ? "XFile_FileList1" :
-		target && *target == XA_TARGETS ? "TARGETS" :
-		target && *target == XA_TIMESTAMP ? "TIMESTAMP" :
-		target && *target == XA_STRING ? "STRING" :
-		target && *target == XA_UTF8_STRING ? "UTF8_STRING" : "unknown",
-		XtIsWidget(w) ? XtName(w) : "(null)");
-
 	ctx = dnd_current_ctx;
 
 	if(ctx == NULL || ctx->magic != DND_CTX_MAGIC || target == NULL) {
-		fprintf(stderr, "[DND] convert_proc: no valid ctx, returning False\n");
 		return False;
 	}
 
@@ -391,8 +380,6 @@ dnd_cleanup_cb(XtPointer client_data, XtIntervalId *id)
 	unsigned int i;
 	Widget icon;
 
-	fprintf(stderr, "[DND] cleanup_cb: called (dnd_active=%d)\n", dnd_active);
-
 	(void)id;
 
 	dnd_active = False;
@@ -440,8 +427,6 @@ dnd_drag_finish_cb(Widget w, XtPointer client_data, XtPointer call_data)
 	struct dnd_drag_context *ctx = (struct dnd_drag_context*)client_data;
 	struct file_list_part *fl;
 
-	fprintf(stderr, "[DND] drag_finish_cb: called\n");
-
 	(void)w;
 	(void)call_data;
 
@@ -449,19 +434,15 @@ dnd_drag_finish_cb(Widget w, XtPointer client_data, XtPointer call_data)
 	dnd_active = False;
 
 	if(xdnd_has_active_target()) {
-		fprintf(stderr, "[DND] drag_finish_cb: XDnD has active target, requesting finish\n");
 		xdnd_request_finish();
 	} else {
-		fprintf(stderr, "[DND] drag_finish_cb: XDnD has no active target, ending drag\n");
 		xdnd_end_drag();
 	}
 
 	/* Disown the custom DnD selection. */
 	if(dnd_current_ctx != NULL && dnd_current_ctx->source_widget != NULL) {
-		fprintf(stderr, "[DND] drag_finish_cb: calling XtDisownSelection for _XFILE_DND_DATA\n");
 		XtDisownSelection(dnd_current_ctx->source_widget,
 			XA_XFILE_DND_DATA, CurrentTime);
-		XSync(XtDisplay(dnd_current_ctx->source_widget), False);
 	}
 	dnd_current_ctx = NULL;
 
@@ -668,31 +649,13 @@ dnd_start_drag(Widget w, XEvent *event)
 	}
 
 	if(drag_context != NULL) {
-		Atom motif_drop;
-		Window owner_motif;
-		Window owner_xfile;
-		Boolean own_ok;
 		Time own_time;
 
-		fprintf(stderr, "[DND] start_drag: calling xdnd_start_drag\n");
 		xdnd_start_drag(w, event, (XtPointer)ctx);
 
-		motif_drop = XInternAtom(XtDisplay(w), "_MOTIF_DROP", False);
-		owner_motif = XGetSelectionOwner(XtDisplay(w), motif_drop);
-		owner_xfile = XGetSelectionOwner(XtDisplay(w), XA_XFILE_DND_DATA);
-		fprintf(stderr, "[DND] start_drag: _MOTIF_DROP owner=0x%lx _XFILE_DND_DATA owner=0x%lx\n",
-		    (unsigned long)owner_motif, (unsigned long)owner_xfile);
-
 		own_time = (event->type == ButtonPress) ? event->xbutton.time : event->xkey.time;
-		own_ok = XtOwnSelection(w, XA_XFILE_DND_DATA, own_time,
+		(void)XtOwnSelection(w, XA_XFILE_DND_DATA, own_time,
 		    dnd_convert_proc, NULL, NULL);
-		fprintf(stderr, "[DND] start_drag: XtOwnSelection returned %s\n",
-		    own_ok ? "True" : "False");
-
-		XSync(XtDisplay(w), False);
-		owner_xfile = XGetSelectionOwner(XtDisplay(w), XA_XFILE_DND_DATA);
-		fprintf(stderr, "[DND] start_drag: after XSync _XFILE_DND_DATA owner=0x%lx\n",
-		    (unsigned long)owner_xfile);
 	}
 
 	fl->dnd_state = DND_DRAG;
@@ -861,10 +824,6 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 		return;
 	}
 
-	fprintf(stderr, "[DND] drop_cb: dropAction=%d operation=%d x=%d y=%d\n",
-		dropInfo->dropAction, dropInfo->operation,
-		dropInfo->x, dropInfo->y);
-
 
 	if(dropInfo->dropAction == XmDROP_HELP) {
 		XtSetArg(args[0], XmNtransferStatus, XmTRANSFER_FAILURE);
@@ -932,21 +891,15 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 	if(src_ctx == NULL) {
 		Window owner;
 
-		fprintf(stderr, "[DND] drop_cb: cross-instance/external path\n");
-
 		td->drag_context = dropInfo->dragContext;
 
 		owner = XGetSelectionOwner(XtDisplay(w), XA_XFILE_DND_DATA);
-		fprintf(stderr, "[DND] drop_cb: _XFILE_DND_DATA owner=0x%lx (None=%d)\n",
-		    (unsigned long)owner, owner == None);
 
 		if(owner != None) {
 			/* Cross-instance xfile DnD: use our custom selection atom.
 			 * The source xfile owns _XFILE_DND_DATA and will respond
 			 * via dnd_convert_proc. */
 			Atom selection_atom = XA_XFILE_DND_DATA;
-
-			fprintf(stderr, "[DND] drop_cb: xfile-to-xfile, using _XFILE_DND_DATA\n");
 
 			XtGetSelectionValue(w, selection_atom, XA_TEXT_URI_LIST,
 				dnd_selection_callback, (XtPointer)td,
@@ -956,8 +909,6 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 			 * The external app uses _MOTIF_DROP or XDnD protocol,
 			 * and XmDropTransferStart handles it (with BadAtom suppression). */
 			XmDropTransferEntryRec entry;
-
-			fprintf(stderr, "[DND] drop_cb: external app, using XmDropTransferStart\n");
 
 			entry.client_data = (XtPointer)td;
 			entry.target = XA_TEXT_URI_LIST;
@@ -979,8 +930,6 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 		}
 	} else {
 		XmDropTransferEntryRec entry;
-
-		fprintf(stderr, "[DND] drop_cb: same-instance path, calling XmDropTransferStart\n");
 
 		entry.client_data = (XtPointer)td;
 		entry.target = target;
@@ -1017,11 +966,6 @@ dnd_selection_callback(Widget w, XtPointer client_data,
 	(void)selection;
 	(void)format;
 
-	fprintf(stderr, "[DND] selection_callback: type=%ld length=%lu value=%p\n",
-		type ? (long)*type : 0,
-		length ? (unsigned long)*length : 0,
-		(void*)value);
-
 	if(td == NULL) {
 		if(value != NULL) XtFree((char*)value);
 		return;
@@ -1031,7 +975,6 @@ dnd_selection_callback(Widget w, XtPointer client_data,
 	operation = td->operation;
 
 	if(type == NULL || length == NULL || value == NULL || *length == 0) {
-		fprintf(stderr, "[DND] selection_callback: empty/null data, failing transfer\n");
 		if(td->drag_context != NULL && XtIsWidget(td->drag_context)) {
 			n = 0;
 			XtSetArg(args[n], XmNdropTransfers, NULL); n++;
@@ -1189,9 +1132,6 @@ dnd_selection_callback(Widget w, XtPointer client_data,
 	}
 
 complete:
-	fprintf(stderr, "[DND] selection_callback: calling XmDropTransferStart, status=%s\n",
-		success ? "SUCCESS" : "FAILURE");
-
 	if(td->drag_context != NULL && XtIsWidget(td->drag_context)) {
 		n = 0;
 		XtSetArg(args[n], XmNdropTransfers, NULL); n++;
