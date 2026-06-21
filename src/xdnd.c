@@ -114,7 +114,7 @@ xdnd_init(Display *dpy)
 
 	if(dpy == NULL) return;
 
-	XA_XDND_AWARE = XInternAtom(dpy, "_XdndAware", False);
+	XA_XDND_AWARE = XInternAtom(dpy, "XdndAware", False);
 	XA_XDND_ENTER = XInternAtom(dpy, "_XdndEnter", False);
 	XA_XDND_POSITION = XInternAtom(dpy, "_XdndPosition", False);
 	XA_XDND_STATUS = XInternAtom(dpy, "_XdndStatus", False);
