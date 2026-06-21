@@ -21,7 +21,7 @@
 #include "dnd.h"
 #include "mbstr.h"
 
-#define XDND_DEBUG 0
+#define XDND_DEBUG 1
 #if XDND_DEBUG
 #define xdnd_dbg(fmt,...) fprintf(stderr, "[XDnD] " fmt, ##__VA_ARGS__)
 #else
@@ -275,6 +275,12 @@ xdnd_start_drag(Widget source, XEvent *event, XtPointer drag_context)
 		ButtonMotionMask | ButtonReleaseMask | PointerMotionMask,
 		GrabModeAsync, GrabModeAsync, None, None, start_time);
 	s->pointer_grabbed = (grab_status == GrabSuccess) ? True : False;
+	fprintf(stderr, "[XDnD] XGrabPointer status=%d (%s)\n",
+		grab_status, grab_status == GrabSuccess ? "Success" :
+		grab_status == AlreadyGrabbed ? "AlreadyGrabbed" :
+		grab_status == GrabInvalidTime ? "InvalidTime" :
+		grab_status == GrabNotViewable ? "NotViewable" :
+		grab_status == GrabFrozen ? "Frozen" : "Unknown");
 	xdnd_dbg("start_drag: XGrabPointer status=%d (%s)\n",
 		grab_status, grab_status == GrabSuccess ? "Success" :
 		grab_status == AlreadyGrabbed ? "AlreadyGrabbed" :

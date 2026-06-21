@@ -452,8 +452,10 @@ dnd_drag_finish_cb(Widget w, XtPointer client_data, XtPointer call_data)
 
 	/* Disown the custom DnD selection. */
 	if(dnd_current_ctx != NULL && dnd_current_ctx->source_widget != NULL) {
+		fprintf(stderr, "[DND] drag_finish_cb: calling XtDisownSelection for _XFILE_DND_DATA\n");
 		XtDisownSelection(dnd_current_ctx->source_widget,
 			XA_XFILE_DND_DATA, CurrentTime);
+		XSync(XtDisplay(dnd_current_ctx->source_widget), False);
 	}
 	dnd_current_ctx = NULL;
 
@@ -663,7 +665,10 @@ dnd_start_drag(Widget w, XEvent *event)
 		Atom motif_drop;
 		Window owner_motif;
 		Window owner_xfile;
+		Boolean own_ok;
+		Time own_time;
 
+		fprintf(stderr, "[DND] start_drag: calling xdnd_start_drag\n");
 		xdnd_start_drag(w, event, (XtPointer)ctx);
 
 		motif_drop = XInternAtom(XtDisplay(w), "_MOTIF_DROP", False);
@@ -672,9 +677,16 @@ dnd_start_drag(Widget w, XEvent *event)
 		fprintf(stderr, "[DND] start_drag: _MOTIF_DROP owner=0x%lx _XFILE_DND_DATA owner=0x%lx\n",
 		    (unsigned long)owner_motif, (unsigned long)owner_xfile);
 
-		XtOwnSelection(w, XA_XFILE_DND_DATA,
-		    (event->type == ButtonPress) ? event->xbutton.time : event->xkey.time,
+		own_time = (event->type == ButtonPress) ? event->xbutton.time : event->xkey.time;
+		own_ok = XtOwnSelection(w, XA_XFILE_DND_DATA, own_time,
 		    dnd_convert_proc, NULL, NULL);
+		fprintf(stderr, "[DND] start_drag: XtOwnSelection returned %s\n",
+		    own_ok ? "True" : "False");
+
+		XSync(XtDisplay(w), False);
+		owner_xfile = XGetSelectionOwner(XtDisplay(w), XA_XFILE_DND_DATA);
+		fprintf(stderr, "[DND] start_drag: after XSync _XFILE_DND_DATA owner=0x%lx\n",
+		    (unsigned long)owner_xfile);
 	}
 
 	fl->dnd_state = DND_DRAG;
@@ -912,26 +924,53 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 	}
 
 	if(src_ctx == NULL) {
-		Atom selection_atom;
 		Window owner;
 
-		fprintf(stderr, "[DND] drop_cb: cross-instance path, calling XtGetSelectionValue\n");
+		fprintf(stderr, "[DND] drop_cb: cross-instance/external path\n");
 
 		td->drag_context = dropInfo->dragContext;
 
-		selection_atom = XA_XFILE_DND_DATA;
-		owner = XGetSelectionOwner(XtDisplay(w), selection_atom);
-		fprintf(stderr, "[DND] drop_cb: _XFILE_DND_DATA selection owner = 0x%lx (None=%d)\n",
+		owner = XGetSelectionOwner(XtDisplay(w), XA_XFILE_DND_DATA);
+		fprintf(stderr, "[DND] drop_cb: _XFILE_DND_DATA owner=0x%lx (None=%d)\n",
 		    (unsigned long)owner, owner == None);
-		fprintf(stderr, "[DND] drop_cb: dragContext=%p XtIsWidget=%d\n",
-		    (void*)dropInfo->dragContext,
-		    dropInfo->dragContext ? XtIsWidget(dropInfo->dragContext) : 0);
-		fprintf(stderr, "[DND] drop_cb: dropContext window=0x%lx\n",
-		    dropInfo->dragContext ? (unsigned long)XtWindow(dropInfo->dragContext) : 0UL);
 
-		XtGetSelectionValue(w, selection_atom, XA_TEXT_URI_LIST,
-			dnd_selection_callback, (XtPointer)td,
-			dropInfo->timeStamp);
+		if(owner != None) {
+			/* Cross-instance xfile DnD: use our custom selection atom.
+			 * The source xfile owns _XFILE_DND_DATA and will respond
+			 * via dnd_convert_proc. */
+			Atom selection_atom = XA_XFILE_DND_DATA;
+
+			fprintf(stderr, "[DND] drop_cb: xfile-to-xfile, using _XFILE_DND_DATA\n");
+
+			XtGetSelectionValue(w, selection_atom, XA_TEXT_URI_LIST,
+				dnd_selection_callback, (XtPointer)td,
+				dropInfo->timeStamp);
+		} else {
+			/* External app DnD: fall back to Motif's built-in transfer.
+			 * The external app uses _MOTIF_DROP or XDnD protocol,
+			 * and XmDropTransferStart handles it (with BadAtom suppression). */
+			XmDropTransferEntryRec entry;
+
+			fprintf(stderr, "[DND] drop_cb: external app, using XmDropTransferStart\n");
+
+			entry.client_data = (XtPointer)td;
+			entry.target = XA_TEXT_URI_LIST;
+
+			n = 0;
+			XtSetArg(args[n], XmNdropTransfers, &entry); n++;
+			XtSetArg(args[n], XmNnumDropTransfers, 1); n++;
+			XtSetArg(args[n], XmNtransferProc, dnd_transfer_cb); n++;
+			XtSetArg(args[n], XmNtransferStatus, XmTRANSFER_SUCCESS); n++;
+
+			transfer = XmDropTransferStart(dropInfo->dragContext, args, n);
+			if(transfer == NULL) {
+				dnd_active = False;
+				free(td->dest_dir);
+				free(td);
+				XtSetArg(args[0], XmNtransferStatus, XmTRANSFER_FAILURE);
+				XtSetValues(w, args, 1);
+			}
+		}
 	} else {
 		XmDropTransferEntryRec entry;
 
