@@ -78,6 +78,7 @@ struct xdnd_session {
 	Bool pointer_grabbed;
 	Bool left_sent;
 	Bool finish_requested;  /* Motif drag finished, XDnD should complete and exit */
+	Bool event_handler_installed;  /* Xt event handler for ClientMessage events */
 
 	/* Last reported pointer position */
 	int last_root_x;
@@ -107,6 +108,8 @@ static void xdnd_send_leave(struct xdnd_session *s, Window target);
 static void xdnd_send_drop(struct xdnd_session *s, Window target);
 static int xdnd_get_target_version(Window target);
 static void xdnd_lose_selection(Widget w, Atom *selection);
+static void xdnd_client_message_handler(Widget w, XtPointer client_data,
+	XEvent *event, Boolean *cont);
 
 void
 xdnd_init(Display *dpy)
@@ -314,6 +317,14 @@ xdnd_start_drag(Widget source, XEvent *event, XtPointer drag_context)
 	s->timeout_timer = XtAppAddTimeOut(
 		XtWidgetToApplicationContext(source),
 		XDND_SESSION_TIMEOUT_MS, xdnd_timeout_cb, (XtPointer)s);
+
+	s->event_handler_installed = False;
+	if(s->source_widget != NULL) {
+		XtAddEventHandler(s->source_widget, NoEventMask, True,
+			xdnd_client_message_handler, (XtPointer)s);
+		s->event_handler_installed = True;
+		fprintf(stderr, "[XDnD] start_drag: installed ClientMessage handler on source_widget\n");
+	}
 
 	xdnd_dbg("start_drag: session initialized, track_proc=%p\n", (void*)s->track_proc);
 
@@ -599,6 +610,33 @@ xdnd_find_aware_ancestor(Display *dpy, Window start)
 }
 
 static void
+xdnd_client_message_handler(Widget w, XtPointer client_data,
+	XEvent *event, Boolean *cont)
+{
+	struct xdnd_session *s;
+	XClientMessageEvent *cm;
+
+	(void)w;
+	(void)cont;
+
+	s = (struct xdnd_session *)client_data;
+	if(s == NULL || s != session) return;
+	if(event == NULL) return;
+	if(event->type != ClientMessage) return;
+
+	cm = (XClientMessageEvent *)event;
+
+	fprintf(stderr, "[XDnD] client_message_handler: type=%lu window=0x%lx\n",
+		(unsigned long)cm->message_type, (unsigned long)cm->window);
+
+	if(cm->message_type == XA_XDND_STATUS) {
+		xdnd_handle_status(s, cm);
+	} else if(cm->message_type == XA_XDND_FINISHED) {
+		xdnd_handle_finished(s);
+	}
+}
+
+static void
 xdnd_poll_timeout_cb(XtPointer client_data, XtIntervalId *id)
 {
 	struct xdnd_session *s = (struct xdnd_session*)client_data;
@@ -856,6 +894,13 @@ xdnd_end_drag(void)
 	xdnd_dbg("end_drag: cleaning up session, source_window=0x%lx\n",
 		(unsigned long)s->source_window);
 	session = NULL;
+
+	if(s->event_handler_installed && s->source_widget != NULL) {
+		XtRemoveEventHandler(s->source_widget, NoEventMask, True,
+			xdnd_client_message_handler, (XtPointer)s);
+		s->event_handler_installed = False;
+		fprintf(stderr, "[XDnD] end_drag: removed ClientMessage handler from source_widget\n");
+	}
 
 	if(s->track_proc != 0) {
 		XtRemoveWorkProc(s->track_proc);
