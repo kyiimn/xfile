@@ -471,6 +471,8 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 		memcpy(buf, data, length);
 		buf[length] = '\0';
 
+		fprintf(stderr, "dnd_drop_received: uri-list data: '%s'\n", buf);
+
 		/* Count items */
 		for(count = 0, line = buf; *line; ) {
 			if(*line == '#' || *line == '\r' || *line == '\n') {
@@ -506,9 +508,14 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 			*end = '\0';
 
 			paths[i] = dnd_uri_to_path(line);
+			fprintf(stderr, "dnd_drop_received: uri='%s' path='%s'\n",
+				line, paths[i] ? paths[i] : "(null)");
 			i++;
 			line = next;
 		}
+
+		fprintf(stderr, "dnd_drop_received: count=%u src_dir=%s dest_dir=%s\n",
+			count, src_dir ? src_dir : "(null)", dest_dir ? dest_dir : "(null)");
 
 		/* Derive source directory from first valid path */
 		src_dir = NULL;
@@ -525,15 +532,21 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 
 		if(src_dir) {
 			char *wd = realpath(src_dir, NULL);
+			fprintf(stderr, "dnd_drop_received: src_dir='%s' wd='%s' dest_dir='%s' same=%d\n",
+				src_dir, wd ? wd : "(null)", dest_dir ? dest_dir : "(null)",
+				wd && dest_dir ? !strcmp(wd, dest_dir) : -1);
 			if(wd && dest_dir && !strcmp(wd, dest_dir)) {
 				free(wd);
 			} else {
 				free(wd);
+				fprintf(stderr, "dnd_drop_received: calling dnd_perform_operation\n");
 				dnd_perform_operation(src_dir, paths, count,
 					dest_dir, operation);
 				success = True;
 			}
 			free(src_dir);
+		} else {
+			fprintf(stderr, "dnd_drop_received: src_dir is NULL, skipping copy\n");
 		}
 
 		for(i = 0; i < count; i++) free(paths[i]);
