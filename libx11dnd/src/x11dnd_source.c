@@ -754,7 +754,9 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 			&raw, &raw_len, &raw_fmt);
 		if (raw && raw_len > 0) {
 			/* If the callback produced data for the exact target type
-			 * we were asked for, use it as-is without re-encoding. */
+			 * we were asked for, use it as-is without re-encoding.
+			 * Jump past the path-splitting and conversion to the
+			 * XChangeProperty + SelectionNotify section. */
 			if (req->target == atoms->text_uri_list
 				|| req->target == atoms->UTF8_STRING
 				|| req->target == atoms->STRING
@@ -764,6 +766,7 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 				length = raw_len;
 				format = raw_fmt;
 				success = True;
+				goto send_notify;
 			}
 			/* The callback provides paths as a NUL-separated or
 			 * newline-separated list. Split into an array.
@@ -884,6 +887,7 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 		success = False;
 	}
 
+send_notify:
 	prop_target = success ? req->property : None;
 
 	fprintf(stderr, "handle_selection_request: success=%d prop_target=%ld data=%p length=%lu format=%d\n",
