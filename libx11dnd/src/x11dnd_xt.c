@@ -88,6 +88,8 @@ xt_drag_work_proc(XtPointer client_data)
 	if (sess == NULL)
 		return True;
 
+	fprintf(stderr, "drag_work_proc: called, sess=%p\n", (void *)sess);
+
 	x11dnd_source_track_motion(sess, 0, 0, CurrentTime);
 
 	return False;
@@ -106,6 +108,8 @@ xt_poll_timer_cb(XtPointer client_data, XtIntervalId *id)
 	sess = (X11DndSourceSession *)client_data;
 	if (sess == NULL)
 		return;
+
+	fprintf(stderr, "poll_timer_cb: called, sess=%p\n", (void *)sess);
 
 	x11dnd_source_track_motion(sess, 0, 0, CurrentTime);
 

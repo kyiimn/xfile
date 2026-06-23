@@ -37,6 +37,8 @@ x11dnd_start_drag(Display *dpy, Window source_win, X11DndClass *callbacks,
 		return NULL;
 	}
 
+	fprintf(stderr, "start_drag: source_win=0x%lx\n", (unsigned long)source_win);
+
 	atoms = x11dnd_get_atoms();
 	if (atoms == NULL) {
 		if (callbacks && callbacks->on_error) {
@@ -1008,6 +1010,8 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 		return;
 	}
 
+	fprintf(stderr, "track_motion: called, sess=%p state=%d\n", (void *)sess, sess->state);
+
 	if (sess->state == X11DND_SOURCE_DROP_SENT ||
 		sess->state == X11DND_SOURCE_FINISHED) {
 		return;
@@ -1025,6 +1029,12 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 	if (!XQueryPointer(sess->dpy, root,
 		&root_return, &child, &x, &y, &dest_x, &dest_y, &mask)) {
 		return;
+	}
+
+	fprintf(stderr, "track_motion: root_x=%d root_y=%d child=0x%lx\n", x, y, (unsigned long)child);
+
+	if (child == None) {
+		fprintf(stderr, "track_motion: no target under pointer\n");
 	}
 
 	/* Descend into the child window tree to find the deepest window */
@@ -1052,12 +1062,16 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 		target = None;
 	}
 
+	fprintf(stderr, "track_motion: target=0x%lx aware=%d\n", (unsigned long)target, target != None ? 1 : 0);
+
 	/* Target changed: send Leave to old, Enter to new */
 	if (target != sess->current_target) {
 		if (sess->current_target != None) {
+			fprintf(stderr, "track_motion: sending XdndLeave to 0x%lx\n", (unsigned long)sess->current_target);
 			x11dnd_source_send_leave(sess, sess->current_target);
 		}
 		if (target != None) {
+			fprintf(stderr, "track_motion: sending XdndEnter to 0x%lx\n", (unsigned long)target);
 			x11dnd_source_send_enter(sess, target);
 		}
 	}
@@ -1065,6 +1079,7 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 	/* Send XdndPosition if we have a target and not waiting for status */
 	if (target != None && !sess->waiting_for_status) {
 		Atom action = sess->actions[0];
+		fprintf(stderr, "track_motion: sending XdndPosition to 0x%lx\n", (unsigned long)target);
 		x11dnd_source_send_position(sess, target, x, y, time, action);
 	}
 }
