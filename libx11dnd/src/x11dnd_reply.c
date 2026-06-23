@@ -44,6 +44,7 @@
 #include "x11dnd_util.h"
 
 #include <X11/Xlib.h>
+#include <stdio.h>
 
 /*
  * Send an XdndStatus reply to the drag source.
@@ -102,6 +103,9 @@ x11dnd_send_status(Display *dpy, Window source, Window target,
 
     data[4] = (long)action;
 
+    fprintf(stderr, "send_status: to=0x%lx from=0x%lx accept=%d action=%ld\n",
+        (unsigned long)source, (unsigned long)target,
+        (int)(flags & 0x1), (long)action);
     x11dnd_send_client_message(dpy, source, target,
         atoms->XdndStatus, data, CurrentTime);
 }

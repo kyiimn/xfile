@@ -18,6 +18,7 @@
 #include "x11dnd_atoms.h"
 #include "x11dnd_source.h"
 #include "x11dnd_target.h"
+#include <stdio.h>
 
 /* Module-level state for the Xt integration */
 static Display *xt_dpy = NULL;
@@ -333,7 +334,13 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 		return 0;
 
 	switch (ev->type) {
-	case ClientMessage:
+	case ClientMessage: {
+		char *aname = XGetAtomName(ev->xclient.display,
+			ev->xclient.message_type);
+		fprintf(stderr, "xt_process_event: ClientMessage type=%s window=0x%lx\n",
+			aname ? aname : "(null)",
+			(unsigned long)ev->xclient.window);
+		if (aname) XFree(aname);
 		consumed = x11dnd_target_process_event(ev);
 		if (!consumed) {
 			consumed = x11dnd_source_process_event(ev);
@@ -350,6 +357,7 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 			}
 		}
 		break;
+	}
 
 	case SelectionNotify:
 		consumed = x11dnd_target_handle_selection_notify(ev);
