@@ -361,6 +361,13 @@ x11dnd_source_handle_status(X11DndSourceSession *sess,
 		return 0;
 	}
 
+	/* Ignore XdndStatus after XdndDrop has been sent or the drag
+	 * has finished — stale messages must not regress the state. */
+	if (sess->state == X11DND_SOURCE_DROP_SENT
+		|| sess->state == X11DND_SOURCE_FINISHED) {
+		return 1;
+	}
+
 	fprintf(stderr, "source_handle_status: from=0x%lx accept=%d state=%d\n",
 		(unsigned long)ev->data.l[0],
 		(int)(ev->data.l[1] & 0x1),

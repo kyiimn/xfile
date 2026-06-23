@@ -115,6 +115,15 @@ X11DndSourceSession *x11dnd_xt_start_drag(Widget w, XButtonEvent *event,
  */
 void x11dnd_xt_cancel_drag(void);
 
+/**
+ * @brief Stop the Xt work proc and timer for drag tracking.
+ *
+ * Call after XdndDrop has been sent. The session remains alive
+ * so that XdndFinished and SelectionRequest can still arrive.
+ * The on_drag_end callback will clean up the session.
+ */
+void x11dnd_xt_stop_tracking(void);
+
 /* =========================================================================
  * Event dispatch (Xt convenience)
  *

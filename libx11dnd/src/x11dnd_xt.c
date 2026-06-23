@@ -320,6 +320,19 @@ x11dnd_xt_cancel_drag(void)
 	xt_active_source = NULL;
 }
 
+void
+x11dnd_xt_stop_tracking(void)
+{
+	if (xt_work_proc_id != None) {
+		XtRemoveWorkProc(xt_work_proc_id);
+		xt_work_proc_id = None;
+	}
+	if (xt_poll_timer_id != None) {
+		XtRemoveTimeOut(xt_poll_timer_id);
+		xt_poll_timer_id = None;
+	}
+}
+
 /* ===================================================================
  * Public API: Event dispatch
  * =================================================================== */
