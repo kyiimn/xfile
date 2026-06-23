@@ -35,7 +35,6 @@
 #include "x11dnd_util.h"
 
 #include <X11/Xatom.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -549,8 +548,6 @@ x11dnd_target_process_event(XEvent *ev)
     }
 
     if (cm->message_type == atoms->XdndDrop) {
-        fprintf(stderr, "XDND TARGET: XdndDrop received window=0x%lx source=0x%lx\n",
-            (unsigned long)cm->window, (unsigned long)cm->data.l[0]);
         return x11dnd_target_handle_drop(sess, cm);
     }
 

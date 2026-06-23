@@ -20,7 +20,6 @@
 #include <stdio.h>
 #include <X11/Xatom.h>
 #include <ctype.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -723,11 +722,6 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 	}
 
 	req = &ev->xselectionrequest;
-
-	fprintf(stderr, "XDND SOURCE: SelectionRequest selection=%ld XdndSel=%ld target=%ld property=%ld requestor=0x%lx time=%lu\n",
-		(long)req->selection, (long)atoms->XdndSelection,
-		(long)req->target, (long)req->property,
-		(unsigned long)req->requestor, (unsigned long)req->time);
 
 	if (req->selection != atoms->XdndSelection) {
 		return 0;

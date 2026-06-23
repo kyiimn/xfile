@@ -424,7 +424,7 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 	unsigned char *data, unsigned long length, int format)
 {
 	Widget w;
-	char *dest_dir;
+	char *dest_dir = NULL;
 	char *src_dir;
 	char **paths;
 	unsigned int count;
@@ -436,6 +436,7 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 	Display *dpy;
 	Window source_win;
 	Window target_win;
+	struct file_list_part *fl;
 	Bool success = False;
 
 	if(sess == NULL || data == NULL || length == 0) {
@@ -448,8 +449,22 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 	source_win = x11dnd_target_get_source_window(sess);
 	target_win = x11dnd_target_get_window(sess);
 
-	/* Determine destination directory */
-	dest_dir = dnd_dir_path_from_widget(w);
+	/* Determine destination directory: if a directory item is highlighted
+	 * (from dnd_position_received), drop into that directory. Otherwise
+	 * fall back to the window's current directory. */
+	fl = FL_PART(w);
+	if(fl && fl->dnd_highlight_active && fl->dnd_highlight_item < fl->num_items
+		&& S_ISDIR(fl->items[fl->dnd_highlight_item].mode)) {
+		char *tmp = dnd_make_absolute_path(app_inst.location,
+			fl->items[fl->dnd_highlight_item].name);
+		if(tmp) {
+			dest_dir = realpath(tmp, NULL);
+			XtFree(tmp);
+		}
+	}
+	if(dest_dir == NULL) {
+		dest_dir = dnd_dir_path_from_widget(w);
+	}
 	if(dest_dir == NULL) {
 		dest_dir = realpath(app_inst.location, NULL);
 		if(dest_dir == NULL) return;
@@ -457,8 +472,6 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 
 	{
 		Atom action = x11dnd_target_get_action(sess);
-		fprintf(stderr, "dnd_drop_received: action=%ld XA_XdndActionMove=%ld XA_XdndActionCopy=%ld\n",
-			(long)action, (long)XA_XdndActionMove, (long)XA_XdndActionCopy);
 		if(action == XA_XdndActionMove) {
 			operation = XfDROP_MOVE;
 		} else {
@@ -656,6 +669,8 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 	}
 
 	free(dest_dir);
+
+	dnd_clear_highlight(w);
 
 	/* Send XdndFinished */
 	if(dpy != NULL && source_win != None && target_win != None) {
