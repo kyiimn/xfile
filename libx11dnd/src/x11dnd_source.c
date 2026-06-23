@@ -1000,6 +1000,7 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 	int dest_x, dest_y;
 	unsigned int mask;
 	Window root;
+	static int track_count = 0;
 
 	if (sess == NULL) {
 		return;
@@ -1024,6 +1025,12 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 		return;
 	}
 
+	track_count++;
+	if (track_count <= 5 || (track_count % 20) == 0) {
+		fprintf(stderr, "track_motion[%d]: state=%d child=0x%lx x=%d y=%d\n",
+			track_count, sess->state, (unsigned long)child, x, y);
+	}
+
 	/* Descend into the child window tree to find the deepest window */
 	if (child != None) {
 		child = x11dnd_find_window_at_point(sess->dpy, root, x, y);
@@ -1032,6 +1039,8 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 	/* Find the nearest XdndAware ancestor */
 	if (child != None) {
 		target = x11dnd_find_aware_ancestor(sess->dpy, child);
+		fprintf(stderr, "track_motion: find_aware_ancestor(0x%lx) = 0x%lx\n",
+			(unsigned long)child, (unsigned long)target);
 	} else {
 		target = None;
 	}
@@ -1040,17 +1049,23 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 	if (target != None) {
 		proxy = x11dnd_validate_proxy(sess->dpy, target);
 		if (proxy != None) {
+			fprintf(stderr, "track_motion: proxy 0x%lx -> 0x%lx\n",
+				(unsigned long)target, (unsigned long)proxy);
 			target = proxy;
 		}
 	}
 
 	/* Prevent self-drag: skip if the target is our own source window */
 	if (target == sess->source_win) {
+		fprintf(stderr, "track_motion: self-drag detected, skipping (target=0x%lx=source)\n",
+			(unsigned long)target);
 		target = None;
 	}
 
 	/* Target changed: send Leave to old, Enter to new */
 	if (target != sess->current_target) {
+		fprintf(stderr, "track_motion: target changed old=0x%lx new=0x%lx\n",
+			(unsigned long)sess->current_target, (unsigned long)target);
 		if (sess->current_target != None) {
 			x11dnd_source_send_leave(sess, sess->current_target);
 		}
