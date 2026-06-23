@@ -373,10 +373,17 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 	}
 
 	case SelectionNotify:
+		fprintf(stderr, "xt_process_event: SelectionNotify selection=%ld target=%ld property=%ld\n",
+			(long)ev->xselection.selection, (long)ev->xselection.target,
+			(long)ev->xselection.property);
 		consumed = x11dnd_target_handle_selection_notify(ev);
 		break;
 
 	case SelectionRequest:
+		fprintf(stderr, "xt_process_event: SelectionRequest selection=%ld target=%ld property=%ld requestor=0x%lx\n",
+			(long)ev->xselectionrequest.selection, (long)ev->xselectionrequest.target,
+			(long)ev->xselectionrequest.property,
+			(unsigned long)ev->xselectionrequest.requestor);
 	case SelectionClear:
 		consumed = x11dnd_source_process_event(ev);
 		/* SelectionClear calls x11dnd_cancel_drag which frees
