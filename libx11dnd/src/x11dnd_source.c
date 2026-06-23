@@ -887,15 +887,23 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 
 	prop_target = success ? req->property : None;
 
+	fprintf(stderr, "handle_selection_request: success=%d prop_target=%ld data=%p length=%lu format=%d\n",
+		success, (long)prop_target, (void *)data, length, format);
+
 	if (success && data != NULL && req->property != None) {
 		XChangeProperty(sess->dpy, req->requestor, req->property,
 			req->target, format, PropModeReplace, data,
 			(int)length);
 		XFlush(sess->dpy);
+		fprintf(stderr, "handle_selection_request: XChangeProperty done on window 0x%lx property=%ld target=%ld format=%d length=%lu\n",
+			(unsigned long)req->requestor, (long)req->property,
+			(long)req->target, format, length);
 	}
 
 	send_selection_notify(sess->dpy, req->requestor, req->selection,
 		req->target, prop_target, req->time, success);
+	fprintf(stderr, "handle_selection_request: SelectionNotify sent success=%d property=%ld\n",
+		success, (long)prop_target);
 
 	if (data) {
 		free(data);
