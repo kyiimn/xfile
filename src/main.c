@@ -44,6 +44,7 @@
 #include "select.h"
 #include "xdgopen.h"
 #include "dnd.h"
+#include "x11dnd_xt.h"
 
 #include "debug.h"
 
@@ -414,7 +415,22 @@ int main(int argc, char **argv)
 	map_shell_unpos(app_inst.wshell);
 	
 	set_location(open_spec, True);
-	XtAppMainLoop(app_inst.context);
+
+	/* Replace XtAppMainLoop with a custom loop that feeds
+	 * SelectionNotify and SelectionRequest events to libx11dnd
+	 * before Xt dispatches them. Xt's internal selection handler
+	 * silently discards SelectionNotify events that have no
+	 * registered XtConvertSelection callback, so libx11dnd must
+	 * intercept them first. */
+	{
+		XEvent ev;
+		for (;;) {
+			XtAppNextEvent(app_inst.context, &ev);
+			if (!x11dnd_xt_process_event(NULL, &ev)) {
+				XtDispatchEvent(&ev);
+			}
+		}
+	}
 	return 0;
 }
 
