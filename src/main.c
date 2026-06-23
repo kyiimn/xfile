@@ -416,20 +416,15 @@ int main(int argc, char **argv)
 	
 	set_location(open_spec, True);
 
-	/* Replace XtAppMainLoop with a custom loop that feeds
-	 * SelectionNotify and SelectionRequest events to libx11dnd
-	 * before Xt dispatches them. Xt's internal selection handler
-	 * silently discards SelectionNotify events that have no
-	 * registered XtConvertSelection callback, so libx11dnd must
-	 * intercept them first. */
-	{
+	for (;;) {
 		XEvent ev;
-		for (;;) {
+		while (XtAppPending(app_inst.context)) {
 			XtAppNextEvent(app_inst.context, &ev);
 			if (!x11dnd_xt_process_event(NULL, &ev)) {
 				XtDispatchEvent(&ev);
 			}
 		}
+		XtAppProcessEvent(app_inst.context, XtIMAll);
 	}
 	return 0;
 }
