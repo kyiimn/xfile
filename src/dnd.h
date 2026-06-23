@@ -42,6 +42,9 @@ void dnd_destroy(void);
 /* Start a drag operation from the given widget */
 void dnd_start_drag(Widget w, XEvent *event);
 
+/* Returns True if an XDnD drag is currently in progress */
+Boolean dnd_drag_active(void);
+
 /* X error handler for DnD operations */
 int dnd_xerror_handler(Display *dpy, XErrorEvent *ev);
 

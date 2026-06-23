@@ -2442,7 +2442,9 @@ static void button_motion(Widget w, XEvent *evt,
 		WARNING(w, "Wrong event type for the action PrimaryButtonMotion()");
 		return;
 	}
-	
+
+	if(dnd_drag_active()) return;
+
 	if(!fl->ptr_last_valid) return;
 
 	delx = evt->xbutton.x - fl->ptr_last_x;

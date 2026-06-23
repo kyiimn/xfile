@@ -1603,3 +1603,9 @@ dnd_start_drag(Widget w, XEvent *event)
 	dnd_source_widget = w;
 	fl->dnd_state = DND_DRAG;
 }
+
+Boolean
+dnd_drag_active(void)
+{
+	return dnd_source_session != NULL;
+}
