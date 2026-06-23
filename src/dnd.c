@@ -394,12 +394,10 @@ dnd_position_received(X11DndTargetSession *sess,
 
 	if(item_at_xy(w, wx, wy, &index)
 		&& S_ISDIR(fl->items[index].mode)) {
-		fprintf(stderr, "dnd_position_received: highlighting item %u (dir '%s')\n", index, fl->items[index].name);
 		dnd_highlight_item(w, index);
 		if(dnd_saved_dest_name) XtFree(dnd_saved_dest_name);
 		dnd_saved_dest_name = XtNewString(fl->items[index].name);
 	} else {
-		fprintf(stderr, "dnd_position_received: clearing highlight (no dir at %d,%d)\n", (int)wx, (int)wy);
 		dnd_clear_highlight(w);
 		if(dnd_saved_dest_name) { XtFree(dnd_saved_dest_name); dnd_saved_dest_name = NULL; }
 	}
@@ -422,7 +420,6 @@ static void
 dnd_on_leave(X11DndTargetSession *sess)
 {
 	(void)sess;
-	fprintf(stderr, "dnd_on_leave called\n");
 
 	if(wlist_ref != NULL) {
 		dnd_clear_highlight(wlist_ref);
@@ -448,7 +445,6 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 	Display *dpy;
 	Window source_win;
 	Window target_win;
-	struct file_list_part *fl;
 	Bool success = False;
 
 	if(sess == NULL || data == NULL || length == 0) {
@@ -464,9 +460,6 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 	/* Determine destination directory: if a directory item was highlighted
 	 * during drag tracking (saved in dnd_saved_dest_name), drop into
 	 * that directory. Otherwise fall back to the window's current dir. */
-	fl = FL_PART(w);
-	fprintf(stderr, "dnd_drop_received: fl=%p saved_dest='%s'\n",
-		(void*)fl, dnd_saved_dest_name ? dnd_saved_dest_name : "(null)");
 	if(dnd_saved_dest_name) {
 		char *tmp = dnd_make_absolute_path(app_inst.location,
 			dnd_saved_dest_name);
@@ -485,9 +478,6 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 
 	{
 		Atom action = x11dnd_target_get_action(sess);
-		fprintf(stderr, "dnd_drop_received: action=%ld Move=%ld Copy=%ld target=%ld XA_URI=%ld\n",
-			(long)action, (long)XA_XdndActionMove, (long)XA_XdndActionCopy,
-			(long)target, (long)XA_TEXT_URI_LIST);
 		if(action == XA_XdndActionMove) {
 			operation = XfDROP_MOVE;
 		} else {
@@ -557,9 +547,6 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 
 		if(src_dir) {
 			char *wd = realpath(src_dir, NULL);
-			fprintf(stderr, "dnd_drop_received: src_dir='%s' wd='%s' dest_dir='%s' same=%d\n",
-				src_dir, wd ? wd : "(null)", dest_dir ? dest_dir : "(null)",
-				wd && dest_dir && !strcmp(wd, dest_dir));
 			if(wd && dest_dir && !strcmp(wd, dest_dir)) {
 				free(wd);
 			} else {
