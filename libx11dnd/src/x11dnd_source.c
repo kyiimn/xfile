@@ -752,8 +752,8 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 	success = False;
 
 	/* Fetch paths from the get_drag_data callback if available.
-	 * The callback provides raw file paths; we convert to the requested
-	 * target format below. */
+	 * If the callback provides data in the exact requested format,
+	 * use it directly. Otherwise, split into paths and convert. */
 	if (sess->callbacks && sess->callbacks->get_drag_data) {
 		unsigned char *raw = NULL;
 		unsigned long raw_len = 0;
@@ -762,6 +762,19 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 		sess->callbacks->get_drag_data(sess, req->target,
 			&raw, &raw_len, &raw_fmt);
 		if (raw && raw_len > 0) {
+			/* If the callback produced data for the exact target type
+			 * we were asked for, use it as-is without re-encoding. */
+			if (req->target == atoms->text_uri_list
+				|| req->target == atoms->UTF8_STRING
+				|| req->target == atoms->STRING
+				|| req->target == atoms->FILE_NAME
+				|| req->target == atoms->text_plain) {
+				data = raw;
+				length = raw_len;
+				format = raw_fmt;
+				success = True;
+				goto done;
+			}
 			/* The callback provides paths as a NUL-separated or
 			 * newline-separated list. Split into an array.
 			 * Handle \r\n and \n as line terminators per
