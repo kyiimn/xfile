@@ -438,7 +438,14 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 	Window target_win;
 	Bool success = False;
 
-	if(sess == NULL || data == NULL || length == 0) return;
+	if(sess == NULL || data == NULL || length == 0) {
+		fprintf(stderr, "dnd_drop_received: early return sess=%p data=%p length=%lu\n",
+			(void*)sess, (void*)data, length);
+		return;
+	}
+
+	fprintf(stderr, "dnd_drop_received: target=%ld data=%p length=%lu format=%d\n",
+		(long)target, (void*)data, length, format);
 
 	w = wlist_ref;
 	if(w == NULL) return;

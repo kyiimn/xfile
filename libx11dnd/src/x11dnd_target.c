@@ -745,7 +745,11 @@ x11dnd_target_handle_selection_notify(XEvent *ev)
         0, 0x7FFFFFFF, False, AnyPropertyType,
         &actual_type, &format, &nitems, &bytes_after, &data);
 
+    fprintf(stderr, "handle_selection_notify: XGetWindowProperty ret=%d data=%p actual_type=%ld nitems=%lu format=%d\n",
+        ret, (void*)data, (long)actual_type, nitems, format);
+
 	if (ret != Success || data == NULL) {
+		fprintf(stderr, "handle_selection_notify: XGetWindowProperty failed, sending reject\n");
 		x11dnd_send_finished(sess->dpy, sess->source_win,
 			sess->target_win, False, None);
 		free_session_types(sess);
