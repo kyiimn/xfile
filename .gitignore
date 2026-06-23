@@ -70,6 +70,24 @@ dkms.conf
 .cproject
 .settings/
 
+# Sisyphus working directory
+.sisyphus/
+
+# libx11dnd build artifacts
+libx11dnd/libx11dnd.a
+libx11dnd/src/*.o
+libx11dnd/tests/test_action
+libx11dnd/tests/test_api
+libx11dnd/tests/test_atoms
+libx11dnd/tests/test_dsave
+libx11dnd/tests/test_incr
+libx11dnd/tests/test_proxy
+libx11dnd/tests/test_reply
+libx11dnd/tests/test_source
+libx11dnd/tests/test_source_selection
+libx11dnd/tests/test_target_aware
+libx11dnd/tests/test_util
+
 # OS files
 .DS_Store
 .DS_Store?
