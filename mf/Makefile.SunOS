@@ -7,6 +7,8 @@ APPLRESDIR = /usr/lib/X11/app-defaults
 
 CC = gcc
 CFLAGS = -O2 -Wall
+INCDIRS = -I../libx11dnd/include
+LIBDIRS = -L../libx11dnd
 
 include common.mf
 

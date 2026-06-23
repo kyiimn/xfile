@@ -5,8 +5,8 @@ MANDIR = $(PREFIX)/share/man
 SHAREDIR = $(PREFIX)/share/xfile
 APPLRESDIR = /usr/pkg/lib/X11/app-defaults
 
-INCDIRS = -I/usr/X11R7/include -I/usr/pkg/include 
-LIBDIRS = -L/usr/X11R7/lib -L/usr/pkg/lib
+INCDIRS = -I/usr/X11R7/include -I/usr/pkg/include -I../libx11dnd/include
+LIBDIRS = -L/usr/X11R7/lib -L/usr/pkg/lib -L../libx11dnd
 LDFLAGS = -Wl,-R/usr/X11R7/lib,-R/usr/pkg/lib
 
 CFLAGS += -Wall $(INCDIRS)

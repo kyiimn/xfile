@@ -11,8 +11,8 @@ SHAREDIR = $(PREFIX)/share/xfile
 # Some symlink them one way or another.
 APPLRESDIR = /etc/X11/app-defaults
 
-INCDIRS = -I/usr/local/include 
-LIBDIRS = -L/usr/local/lib
+INCDIRS = -I/usr/local/include -I../libx11dnd/include
+LIBDIRS = -L/usr/local/lib -L../libx11dnd
 
 CFLAGS = -O2 -Wall
 

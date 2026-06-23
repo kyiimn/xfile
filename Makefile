@@ -1,9 +1,11 @@
 all:
 	@if [ -e src/Makefile ]; then \
+		$(MAKE) -C libx11dnd $(MAKEFLAGS) && \
 		$(MAKE) -C src $(MAKEFLAGS); \
 	else \
 		if [ -e mf/Makefile.$$(uname) ]; then \
 			ln -s ../mf/Makefile.$$(uname) src/Makefile && \
+			$(MAKE) -C libx11dnd $(MAKEFLAGS) && \
 			$(MAKE) -C src $(MAKEFLAGS); \
 		else \
 			echo "Run: make <target>" && \
@@ -21,9 +23,11 @@ uninstall:
 	$(MAKE) -C src $(MAKEFLAGS) uninstall
 
 clean:
+	-$(MAKE) -C libx11dnd $(MAKEFLAGS) clean
 	$(MAKE) -C src $(MAKEFLAGS) clean
 
 distclean:
+	-$(MAKE) -C libx11dnd $(MAKEFLAGS) clean
 	-$(MAKE) -C src $(MAKEFLAGS) clean
 	-rm src/Makefile
 	
@@ -32,4 +36,5 @@ distclean:
 	@if ! [ -f mf/Makefile.$@ ]; then \
 		echo "Invalid target name: $@" && exit 1; fi
 	ln -s ../mf/Makefile.$@ src/Makefile
+	$(MAKE) -C libx11dnd $(MAKEFLAGS)
 	$(MAKE) -C src $(MAKEFLAGS)
