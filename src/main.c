@@ -44,7 +44,7 @@
 #include "select.h"
 #include "xdgopen.h"
 #include "dnd.h"
-#include "xdnd.h"
+
 #include "debug.h"
 
 /* Icon bitmaps */
@@ -347,7 +347,9 @@ int main(int argc, char **argv)
 	XSetCommand(app_inst.display, XtWindow(app_inst.wshell),
 		saved_args, nsaved_args);
 	free(saved_args);
-	
+
+	dnd_init(app_inst.wlist);
+
 	if(app_inst.visual == CopyFromParent) {
 		app_inst.visual = DefaultVisual(app_inst.display,
 			XScreenNumberOfScreen(app_inst.screen));
@@ -513,8 +515,8 @@ static void create_main_window(void)
 
 	XmScrolledWindowSetAreas(wscrolled, whscrl, wvscrl, app_inst.wlist);
 	
-	dnd_init(app_inst.wlist);
-	xdnd_init(XtDisplay(app_inst.wlist));
+	/* dnd_init() is called after XtRealizeWidget() in main(),
+	 * because the shell must be realized before XDnD registration. */
 	
 	/* list popup wants app_inst.wlist, so create menus at last */
 	create_main_menus();
@@ -734,7 +736,7 @@ static void window_close_cb(Widget w, XtPointer client, XtPointer call)
 {
 	if(app_inst.wshell) stop_read_proc();
 	
-	xdnd_destroy();
+	dnd_destroy();
 	xdg_open_cleanup();
 	
 	if(app_inst.num_sub_shells) {
