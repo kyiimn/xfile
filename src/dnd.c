@@ -268,7 +268,7 @@ dnd_on_drag_begin(X11DndSourceSession *sess)
 
 	root = DefaultRootWindow(dpy);
 
-	if(XGrabPointer(dpy, root, False,
+	if(XGrabPointer(dpy, root, True,
 			ButtonReleaseMask | ButtonPressMask | PointerMotionMask,
 			GrabModeAsync, GrabModeAsync, None,
 			dnd_drag_cursor, CurrentTime) == GrabSuccess) {
