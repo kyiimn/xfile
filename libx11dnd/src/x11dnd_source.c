@@ -111,6 +111,21 @@ x11dnd_start_drag(Display *dpy, Window source_win, X11DndClass *callbacks,
 	XSetSelectionOwner(dpy, atoms->XdndSelection, source_win, time);
 	XFlush(dpy);
 
+	/* Verify we actually own the selection. XSetSelectionOwner can
+	 * silently fail if another client with higher priority grabbed it
+	 * or if the server rejected the ownership change. */
+	if (XGetSelectionOwner(dpy, atoms->XdndSelection) != source_win) {
+		if (callbacks && callbacks->on_error) {
+			callbacks->on_error(
+				"x11dnd_start_drag: failed to acquire XdndSelection ownership",
+				2);
+		}
+		free(sess->types);
+		free(sess->actions);
+		free(sess);
+		return NULL;
+	}
+
 	active_source = sess;
 
 	if (callbacks && callbacks->on_drag_begin) {
@@ -891,6 +906,16 @@ x11dnd_source_handle_selection_clear(XEvent *ev)
 	}
 
 	if (ev->xselectionclear.selection != atoms->XdndSelection) {
+		return 0;
+	}
+
+	/* Ignore stale SelectionClear events: if the event was sent to a
+	 * different window or predates our drag start, it belongs to a
+	 * previous session and must not cancel our active drag. */
+	if (ev->xselectionclear.window != sess->source_win) {
+		return 0;
+	}
+	if (ev->xselectionclear.time <= sess->start_time) {
 		return 0;
 	}
 
