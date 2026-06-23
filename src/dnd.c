@@ -298,13 +298,13 @@ dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 	if(dnd_cursor_dpy != NULL && dnd_drag_cursor != None) {
 		XRecolorCursor(dnd_cursor_dpy, dnd_drag_cursor,
 			&dnd_color_neutral_fg, &dnd_color_bg);
-	}
 
-	shell = src_widget;
-	while(shell != NULL && !XtIsShell(shell))
-		shell = XtParent(shell);
-	if(shell != NULL && XtIsRealized(shell)) {
-		XUndefineCursor(dnd_cursor_dpy, XtWindow(shell));
+		shell = src_widget;
+		while(shell != NULL && !XtIsShell(shell))
+			shell = XtParent(shell);
+		if(shell != NULL && XtIsRealized(shell)) {
+			XUndefineCursor(dnd_cursor_dpy, XtWindow(shell));
+		}
 	}
 
 	if(src_widget != NULL) {
