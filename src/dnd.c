@@ -5,7 +5,16 @@
  */
 
 /*
- * Drag-and-drop support for the file list widget
+ * Drag-and-drop support for the file list widget.
+ *
+ * Architecture:
+ *   - XDnD source drag:  via libx11dnd (x11dnd_xt_start_drag)
+ *   - XDnD drop target:  via libx11dnd (x11dnd_xt_register_target)
+ *   - Motif drop target: via XmDropSiteRegister (legacy compatibility for
+ *     receiving drops from Motif apps like nedit)
+ *
+ * All Motif DnD SOURCE code (XmDragStart, XmCreateDragIcon, etc.) has been
+ * removed. The drag source path now goes entirely through libx11dnd.
  */
 
 #include <stdlib.h>
@@ -17,10 +26,11 @@
 #include <X11/Xatom.h>
 #include <Xm/XmP.h>
 #include <Xm/DragDrop.h>
-#include <Xm/DragIcon.h>
 #include <Xm/AtomMgr.h>
+#include "x11dnd.h"
+#include "x11dnd_xt.h"
 #include "dnd.h"
-#include "xdnd.h"
+
 #include "main.h"
 #include "const.h"
 #include "listw.h"
@@ -44,34 +54,42 @@ Atom XA_TIMESTAMP = None;
 /* Custom selection atom for cross-instance DnD data transfer */
 Atom XA_XFILE_DND_DATA = None;
 
-static struct dnd_drag_context *dnd_current_ctx = NULL;
-
-
 /* Widget reference for drag/drop callbacks */
 static Widget wlist_ref = NULL;
 
-/* Export targets: atoms the drag source can convert */
-Atom dnd_export_targets[DND_NUM_EXPORT_TARGETS];
-
 /* Import targets: atoms the drop site accepts */
 Atom dnd_import_targets[DND_NUM_IMPORT_TARGETS];
+
+/* libx11dnd session handle for the active drag source */
+static X11DndSourceSession *dnd_source_session = NULL;
+
+/* Source widget for the active drag (used in on_drag_end callback) */
+static Widget dnd_source_widget = NULL;
+
+/* libx11dnd callback table (static, lives for app lifetime) */
+static X11DndClass dnd_callbacks;
+
+/* XDnD action atoms (interned by x11dnd_init, cached here for fast lookup) */
+static Atom XA_XdndActionCopy = None;
+static Atom XA_XdndActionMove = None;
+static Atom XA_XdndActionLink = None;
 
 /*
  * Targeted X error handler for Motif DnD operations.
  *
  * Open Motif 2.3's internal _MOTIF_DROP selection protocol has the same
- * 64-bit Atom / ICCCM format=32 mismatch bug we fixed in dnd_convert_proc:
- * it passes Atoms through XConvertSelection with format=32, so on x86-64
- * the upper 32 bits of heap Atoms can leak into the atom ID and trigger a
- * BadAtom (invalid Atom parameter) X error. That error occurs inside libXm
- * during cross-instance DnD, not in our code, so we catch and suppress only
+ * 64-bit Atom / ICCCM format=32 mismatch bug: it passes Atoms through
+ * XConvertSelection with format=32, so on x86-64 the upper 32 bits of
+ * heap Atoms can leak into the atom ID and trigger a BadAtom (invalid
+ * Atom parameter) X error. That error occurs inside libXm during
+ * cross-instance DnD, not in our code, so we catch and suppress only
  * BadAtom while a drag is active. All other errors are forwarded to the
  * previous handler so we do not mask real bugs.
  */
 static XErrorHandler dnd_prev_xerr = NULL;
 static Boolean dnd_active = False;
 
-static int
+int
 dnd_xerror_handler(Display *dpy, XErrorEvent *ev)
 {
 	(void)dpy;
@@ -93,57 +111,602 @@ dnd_xerror_handler(Display *dpy, XErrorEvent *ev)
 /* Data passed from dnd_drop_cb to dnd_transfer_cb via client_data */
 struct dnd_transfer_data {
 	char *dest_dir;
-	unsigned char operation;  /* XmDROP_COPY, XmDROP_MOVE, etc. */
+	unsigned char operation;  /* XfDROP_COPY, XfDROP_MOVE, etc. */
 	Widget drag_context;      /* DragContext for protocol completion */
 };
 
 /* Local routines */
-static Widget dnd_create_drag_icon(Widget w, Pixmap icon, Pixmap mask);
-static Boolean dnd_convert_proc(Widget w, Atom *selection, Atom *target,
-	Atom *type, XtPointer *value, unsigned long *length,
-	int *format);
-
-static void dnd_operation_changed_cb(Widget w, XtPointer client_data,
-	XtPointer call_data);
-static void dnd_drag_finish_cb(Widget w, XtPointer client_data,
-	XtPointer call_data);
-static void dnd_drag_end_cb(Widget w, XtPointer client_data,
-	XtPointer call_data);
-static void dnd_drag_site_cb(Widget w, XtPointer client, XtPointer call);
 static void dnd_drop_cb(Widget w, XtPointer client, XtPointer call);
+static void dnd_drag_site_cb(Widget w, XtPointer client, XtPointer call);
 static void dnd_transfer_cb(Widget w, XtPointer client_data,
 	Atom *selection, Atom *type, XtPointer value,
 	unsigned long *length, int *format);
-static void dnd_selection_callback(Widget w, XtPointer client_data,
-	Atom *selection, Atom *type, XtPointer value,
-	unsigned long *length, int *format);
 static char *dnd_uri_to_path(const char *uri);
+static char *dnd_make_absolute_path(const char *dir, const char *name);
+static char *dnd_dir_path_from_widget(Widget w);
+static Boolean item_at_xy(Widget w, Position x, Position y, unsigned int *index);
+static void dnd_highlight_item(Widget w, unsigned int index);
+static void dnd_clear_highlight(Widget w);
+static void dnd_update_highlight(Widget w, Position x, Position y);
 static void dnd_refresh_cb(XtPointer client_data, XtIntervalId *id);
 static Boolean dnd_move_confirm_wp(XtPointer client_data);
 static void dnd_perform_operation(const char *src_dir, char **names,
 	unsigned int count, const char *dest_dir, unsigned char operation);
+static void dnd_status_clear_cb(XtPointer client_data, XtIntervalId *id);
 
-static Widget
-dnd_create_drag_icon(Widget w, Pixmap icon, Pixmap mask)
+
+
+/* ========================================================================
+ * libx11dnd callback implementations
+ * ======================================================================== */
+
+/* Called when a drag operation begins (after XdndEnter is sent) */
+static void
+dnd_on_drag_begin(X11DndSourceSession *sess)
 {
-	Arg args[4];
-	Cardinal n = 0;
-	Widget icon_widget;
-	
-	if(icon == None) return NULL;
-	
-	XtSetArg(args[n], XmNpixmap, icon); n++;
-	if(mask != None) {
-		XtSetArg(args[n], XmNmask, mask); n++;
-	}
-	XtSetArg(args[n], XmNdepth,
-		DefaultDepthOfScreen(XtScreen(w))); n++;
-
-	icon_widget = XmCreateDragIcon(w, "dragIcon", args, n);
-	if(icon_widget == NULL) return NULL;
-
-	return icon_widget;
+	(void)sess;
+	/* Nothing needed — we track state via dnd_source_session */
 }
+
+/* Called when a drag operation ends (after XdndFinished or cancel) */
+static void
+dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
+{
+	Widget src_widget;
+	struct file_list_part *fl;
+
+	(void)completed;
+
+	if(sess == NULL) return;
+
+	src_widget = dnd_source_widget;
+
+	if(src_widget != NULL) {
+		fl = FL_PART(src_widget);
+		if(fl != NULL) fl->dnd_state = DND_NONE;
+		force_update();
+		XtAppAddTimeOut(app_inst.context, 1000,
+			dnd_refresh_cb, (XtPointer)src_widget);
+	}
+
+	dnd_source_session = NULL;
+	dnd_source_widget = NULL;
+}
+
+/* Provide drag data for SelectionRequest (XDnD source) */
+static void
+dnd_get_drag_data(X11DndSourceSession *sess, Atom target,
+	unsigned char **data_ret, unsigned long *length_ret, int *format_ret)
+{
+	Widget src_widget;
+	struct file_list_selection *sel;
+	char *data;
+	size_t len;
+	unsigned int i;
+	char *path_buf;
+	char *real_path;
+
+	if(sess == NULL || data_ret == NULL || length_ret == NULL
+		|| format_ret == NULL) {
+		return;
+	}
+
+	src_widget = dnd_source_widget;
+	if(src_widget == NULL) return;
+
+	sel = file_list_get_selection(src_widget);
+	if(sel == NULL || sel->count == 0) return;
+
+	if(target == XA_TEXT_URI_LIST) {
+		len = 0;
+		for(i = 0; i < sel->count; i++) {
+			path_buf = dnd_make_absolute_path(
+				(const char*)app_inst.location, sel->names[i]);
+			if(!path_buf) continue;
+			len += strlen("file://") + strlen(path_buf) + 2;
+			free(path_buf);
+		}
+		if(len == 0) return;
+
+		data = malloc(len + 1);
+		if(!data) return;
+		data[0] = '\0';
+
+		for(i = 0; i < sel->count; i++) {
+			path_buf = dnd_make_absolute_path(
+				(const char*)app_inst.location, sel->names[i]);
+			if(!path_buf) continue;
+			if(i > 0) strcat(data, "\r\n");
+			strcat(data, "file://");
+			strcat(data, path_buf);
+			free(path_buf);
+		}
+
+		*data_ret = (unsigned char*)data;
+		*length_ret = strlen(data);
+		*format_ret = 8;
+
+	} else if(target == XA_UTF8_STRING || target == XA_STRING) {
+		len = 0;
+		for(i = 0; i < sel->count; i++) {
+			path_buf = dnd_make_absolute_path(
+				(const char*)app_inst.location, sel->names[i]);
+			if(!path_buf) continue;
+			len += strlen(path_buf) + 1;
+			free(path_buf);
+		}
+		if(len == 0) return;
+
+		data = malloc(len + 1);
+		if(!data) return;
+		data[0] = '\0';
+
+		for(i = 0; i < sel->count; i++) {
+			path_buf = dnd_make_absolute_path(
+				(const char*)app_inst.location, sel->names[i]);
+			if(!path_buf) continue;
+			if(i > 0) strcat(data, " ");
+			strcat(data, path_buf);
+			free(path_buf);
+		}
+
+		if(target == XA_STRING)
+			mbs_to_latin1(data, data);
+
+		*data_ret = (unsigned char*)data;
+		*length_ret = strlen(data);
+		*format_ret = 8;
+
+	} else if(target == XA_FILE_NAME) {
+		if(sel->count == 0) return;
+
+		path_buf = dnd_make_absolute_path(
+			(const char*)app_inst.location, sel->names[0]);
+		if(!path_buf) return;
+
+		data = malloc(strlen(path_buf) + 1);
+		if(!data) { free(path_buf); return; }
+		strcpy(data, path_buf);
+		free(path_buf);
+
+		*data_ret = (unsigned char*)data;
+		*length_ret = strlen(data);
+		*format_ret = 8;
+
+	} else if(target == XA_XFILE_FILE_LIST) {
+		char *pos;
+
+		real_path = realpath(app_inst.location, NULL);
+		if(!real_path) return;
+
+		len = strlen(real_path) + 1;
+		for(i = 0; i < sel->count; i++) {
+			len += strlen(sel->names[i]) + 1;
+		}
+
+		data = malloc(len + 1);
+		if(!data) { free(real_path); return; }
+
+		strcpy(data, real_path);
+		pos = data + strlen(real_path) + 1;
+
+		for(i = 0; i < sel->count; i++) {
+			strcpy(pos, sel->names[i]);
+			pos += strlen(sel->names[i]);
+			*pos = '\0';
+			pos++;
+		}
+		*pos = '\0';
+
+		*data_ret = (unsigned char*)data;
+		*length_ret = len + 1;
+		*format_ret = 8;
+		free(real_path);
+	}
+}
+
+/* XdndStatus received from target (XDnD source) */
+static void
+dnd_status_received(X11DndSourceSession *sess, Bool accept,
+	int x, int y, int w, int h, Atom action)
+{
+	(void)sess;
+	(void)accept;
+	(void)x;
+	(void)y;
+	(void)w;
+	(void)h;
+	(void)action;
+	/* Could update cursor/feedback here; currently a no-op */
+}
+
+/* XdndFinished received from target (XDnD source) */
+static void
+dnd_finished_received(X11DndSourceSession *sess, Bool success,
+	Atom performed_action)
+{
+	(void)performed_action;
+
+	if(sess == NULL) return;
+
+	if(!success) {
+		/* Drop was rejected or failed — nothing to do */
+	}
+}
+
+/* XdndEnter received: source is beginning a drag over this target */
+static void
+dnd_on_enter(X11DndTargetSession *sess, Window source,
+	int version, Atom *types, int n_types)
+{
+	(void)sess;
+	(void)source;
+	(void)version;
+	(void)types;
+	(void)n_types;
+	/* Could inspect offered types here; currently a no-op */
+}
+
+/* XdndPosition received (XDnD target) */
+static void
+dnd_position_received(X11DndTargetSession *sess,
+	int x, int y, Time time, Atom action,
+	Bool *accept_ret, Atom *action_ret,
+	int *rect_x, int *rect_y, int *rect_w, int *rect_h)
+{
+	Widget w;
+	struct file_list_part *fl;
+	unsigned int index;
+	Position wx, wy;
+
+	(void)time;
+
+	if(sess == NULL) {
+		*accept_ret = False;
+		return;
+	}
+
+	w = wlist_ref;
+	if(w == NULL || !XtIsRealized(w)) {
+		*accept_ret = False;
+		return;
+	}
+
+	fl = FL_PART(w);
+
+	/* Translate root coordinates to widget-local */
+	{
+		Window child;
+		int dest_x, dest_y;
+		XTranslateCoordinates(XtDisplay(w), XtWindow(w),
+			RootWindowOfScreen(XtScreen(w)),
+			0, 0, &dest_x, &dest_y, &child);
+		wx = (Position)(x - dest_x);
+		wy = (Position)(y - dest_y);
+	}
+
+	if(item_at_xy(w, wx, wy, &index)
+		&& S_ISDIR(fl->items[index].mode)) {
+		dnd_highlight_item(w, index);
+	} else {
+		dnd_clear_highlight(w);
+	}
+
+	*accept_ret = True;
+
+	if(action != None) {
+		*action_ret = action;
+	} else {
+		*action_ret = XA_XdndActionCopy;
+	}
+
+	*rect_x = 0;
+	*rect_y = 0;
+	*rect_w = 0;
+	*rect_h = 0;
+}
+
+/* XdndLeave received: source has left the target window */
+static void
+dnd_on_leave(X11DndTargetSession *sess)
+{
+	(void)sess;
+
+	if(wlist_ref != NULL) {
+		dnd_clear_highlight(wlist_ref);
+	}
+}
+
+/* Drop data received (after SelectionNotify) — the main XDnD drop handler */
+static void
+dnd_drop_received(X11DndTargetSession *sess, Atom target,
+	unsigned char *data, unsigned long length, int format)
+{
+	Widget w;
+	char *dest_dir;
+	char *src_dir;
+	char **paths;
+	unsigned int count;
+	unsigned int i;
+	char *line;
+	char *next;
+	char *end;
+	unsigned char operation;
+	Display *dpy;
+	Window source_win;
+	Window target_win;
+	Bool success = False;
+
+	if(sess == NULL || data == NULL || length == 0) return;
+
+	w = wlist_ref;
+	if(w == NULL) return;
+
+	dpy = x11dnd_target_get_display(sess);
+	source_win = x11dnd_target_get_source_window(sess);
+	target_win = x11dnd_target_get_window(sess);
+
+	/* Determine destination directory */
+	dest_dir = dnd_dir_path_from_widget(w);
+	if(dest_dir == NULL) {
+		dest_dir = realpath(app_inst.location, NULL);
+		if(dest_dir == NULL) return;
+	}
+
+	/* Map the negotiated action to our operation.
+	 * We'll use XfDROP_COPY as default. The action was already
+	 * agreed upon in dnd_position_received. For now, use copy. */
+	operation = XfDROP_COPY;
+
+	if(target == XA_TEXT_URI_LIST) {
+		char *buf;
+
+		buf = malloc(length + 1);
+		if(!buf) { free(dest_dir); return; }
+		memcpy(buf, data, length);
+		buf[length] = '\0';
+
+		/* Count items */
+		for(count = 0, line = buf; *line; ) {
+			if(*line == '#' || *line == '\r' || *line == '\n') {
+				line++;
+				continue;
+			}
+			count++;
+			while(*line && *line != '\r' && *line != '\n') line++;
+			if(*line == '\r') line++;
+			if(*line == '\n') line++;
+		}
+
+		if(count == 0) {
+			free(buf);
+			free(dest_dir);
+			return;
+		}
+
+		paths = (char**)malloc(sizeof(char*) * count);
+		if(!paths) { free(buf); free(dest_dir); return; }
+
+		for(i = 0, line = buf; *line; ) {
+			if(*line == '#' || *line == '\r' || *line == '\n') {
+				line++;
+				continue;
+			}
+
+			end = line;
+			while(*end && *end != '\r' && *end != '\n') end++;
+			next = end;
+			if(*next == '\r') next++;
+			if(*next == '\n') next++;
+			*end = '\0';
+
+			paths[i] = dnd_uri_to_path(line);
+			i++;
+			line = next;
+		}
+
+		/* Derive source directory from first valid path */
+		src_dir = NULL;
+		for(i = 0; i < count; i++) {
+			if(paths[i] != NULL) {
+				src_dir = strdup(paths[i]);
+				if(src_dir) {
+					char *tail = strrchr(src_dir, '/');
+					if(tail) *tail = '\0';
+				}
+				break;
+			}
+		}
+
+		if(src_dir) {
+			/* Avoid same-directory drops */
+			char *wd = realpath(src_dir, NULL);
+			if(wd && dest_dir && !strcmp(wd, dest_dir)) {
+				/* Same directory — skip */
+				free(wd);
+			} else {
+				free(wd);
+				dnd_perform_operation(src_dir, paths, count,
+					dest_dir, operation);
+				success = True;
+			}
+			free(src_dir);
+		}
+
+		for(i = 0; i < count; i++) free(paths[i]);
+		free(paths);
+		free(buf);
+
+	} else if(target == XA_XFILE_FILE_LIST) {
+		char *ptr;
+		char *sb;
+		char **list;
+		unsigned int n;
+		size_t slen;
+
+		ptr = (char*)data;
+		slen = length;
+		for(n = 0; ; ) {
+			if((size_t)(ptr - (char*)data) >= slen || ptr[0] == '\0') {
+				n++;
+				if((size_t)(ptr - (char*)data) + 1 >= slen || ptr[1] == '\0')
+					break;
+			}
+			ptr++;
+		}
+
+		if(n == 0) { free(dest_dir); return; }
+
+		list = (char**)malloc(sizeof(char*) * n);
+		if(!list) { free(dest_dir); return; }
+
+		ptr = (char*)data;
+		sb = ptr;
+		for(i = 0; ; ) {
+			if((size_t)(ptr - (char*)data) >= slen || ptr[0] == '\0') {
+				list[i] = sb;
+				i++;
+				sb = ptr + 1;
+				if((size_t)(ptr - (char*)data) + 1 >= slen || ptr[1] == '\0')
+					break;
+			}
+			ptr++;
+		}
+
+		n--;
+		src_dir = realpath(list[0], NULL);
+		if(!src_dir) src_dir = strdup(list[0]);
+
+		if(src_dir) {
+			char *wd = realpath(src_dir, NULL);
+			if(wd && dest_dir && !strcmp(wd, dest_dir)) {
+				/* Same directory — skip */
+			} else {
+				free(wd);
+				dnd_perform_operation(src_dir, list + 1, n,
+					dest_dir, operation);
+				success = True;
+			}
+			free(src_dir);
+		}
+
+		free(list);
+
+	} else if(target == XA_UTF8_STRING || target == XA_STRING
+		|| target == XA_FILE_NAME) {
+		/* Single-path target: treat as a file path */
+		char *path_copy;
+
+		path_copy = malloc(length + 1);
+		if(!path_copy) { free(dest_dir); return; }
+		memcpy(path_copy, data, length);
+		path_copy[length] = '\0';
+
+		paths = (char**)malloc(sizeof(char*));
+		if(!paths) { free(path_copy); free(dest_dir); return; }
+
+		if(target == XA_FILE_NAME) {
+			/* FILE_NAME is a single absolute path */
+			paths[0] = dnd_uri_to_path(path_copy);
+			if(!paths[0]) {
+				/* Not a URI — treat as plain path */
+				paths[0] = realpath(path_copy, NULL);
+				if(!paths[0]) paths[0] = strdup(path_copy);
+			}
+		} else {
+			/* UTF8_STRING / STRING: try URI parse, fall back to path */
+			paths[0] = dnd_uri_to_path(path_copy);
+			if(!paths[0]) {
+				paths[0] = realpath(path_copy, NULL);
+				if(!paths[0]) paths[0] = strdup(path_copy);
+			}
+		}
+		count = 1;
+
+		if(paths[0]) {
+			src_dir = strdup(paths[0]);
+			if(src_dir) {
+				char *tail = strrchr(src_dir, '/');
+				if(tail) *tail = '\0';
+
+				{
+					char *wd = realpath(src_dir, NULL);
+					if(wd && dest_dir && !strcmp(wd, dest_dir)) {
+						/* Same directory — skip */
+					} else {
+						free(wd);
+						dnd_perform_operation(src_dir, paths, count,
+							dest_dir, operation);
+						success = True;
+					}
+				}
+				free(src_dir);
+			}
+		}
+
+		free(paths[0]);
+		free(paths);
+		free(path_copy);
+	}
+
+	free(dest_dir);
+
+	/* Send XdndFinished */
+	if(dpy != NULL && source_win != None && target_win != None) {
+		x11dnd_send_finished(dpy, source_win, target_win,
+			success ? True : False,
+			success ? XA_XdndActionCopy : None);
+	}
+
+	dnd_active = False;
+}
+
+/* XdndActionAsk callback — present a menu of actions */
+static void
+dnd_action_ask(X11DndTargetSession *sess, Atom *actions, int n_actions,
+	char **descriptions, int n_desc, Atom *chosen_action_ret)
+{
+	(void)sess;
+	(void)descriptions;
+	(void)n_desc;
+
+	/* Default to copy if we can't ask the user */
+	int i;
+
+	if(actions == NULL || n_actions == 0 || chosen_action_ret == NULL) {
+		*chosen_action_ret = XA_XdndActionCopy;
+		return;
+	}
+
+	/* Prefer copy, then move */
+	for(i = 0; i < n_actions; i++) {
+		if(actions[i] == XA_XdndActionCopy) {
+			*chosen_action_ret = XA_XdndActionCopy;
+			return;
+		}
+	}
+	for(i = 0; i < n_actions; i++) {
+		if(actions[i] == XA_XdndActionMove) {
+			*chosen_action_ret = XA_XdndActionMove;
+			return;
+		}
+	}
+
+	*chosen_action_ret = actions[0];
+}
+
+/* Error callback */
+static void
+dnd_on_error(const char *message, int severity)
+{
+	if(severity >= 2) {
+		stderr_msg("DnD error: %s\n", message);
+	}
+}
+
+/* ========================================================================
+ * Helper functions (preserved from original)
+ * ======================================================================== */
 
 static char *
 dnd_make_absolute_path(const char *dir, const char *name)
@@ -190,495 +753,6 @@ dnd_dir_path_from_widget(Widget w)
 	if(!result) return NULL;
 	strcpy(result, buf);
 	return result;
-}
-
-static Boolean
-dnd_convert_proc(Widget w, Atom *selection, Atom *target,
-	Atom *type, XtPointer *value, unsigned long *length,
-	int *format)
-{
-	struct dnd_drag_context *ctx;
-	unsigned int i;
-	int n;
-	char *data;
-	size_t len;
-
-	(void)selection;
-
-	ctx = dnd_current_ctx;
-
-	if(ctx == NULL || ctx->magic != DND_CTX_MAGIC || target == NULL) {
-		return False;
-	}
-
-
-	if(*target == XA_TARGETS) {
-		uint32_t *buf32;
-		n = DND_NUM_EXPORT_TARGETS + 2;
-		buf32 = (uint32_t*)XtMalloc(n * sizeof(uint32_t));
-		if(!buf32) return False;
-		for(i = 0; i < DND_NUM_EXPORT_TARGETS; i++)
-			buf32[i] = (uint32_t)dnd_export_targets[i];
-		buf32[DND_NUM_EXPORT_TARGETS + 0] = (uint32_t)XA_TARGETS;
-		buf32[DND_NUM_EXPORT_TARGETS + 1] = (uint32_t)XA_TIMESTAMP;
-		*type = XA_ATOM;
-		*format = 32;
-		*length = (unsigned long)n;
-		*value = (XtPointer)buf32;
-		return True;
-
-	} else if(*target == XA_TIMESTAMP) {
-		uint32_t *ts32;
-		ts32 = (uint32_t*)XtMalloc(sizeof(uint32_t));
-		if(!ts32) {
-			return False;
-		}
-		*ts32 = (uint32_t)ctx->start_time;
-		*type = XA_INTEGER;
-		*format = 32;
-		*length = 1;
-		*value = (XtPointer)ts32;
-		return True;
-
-	} else if(*target == XA_TEXT_URI_LIST) {
-		len = 0;
-		for(i = 0; i < ctx->num_items; i++) {
-			len += strlen("file://") + strlen(ctx->paths[i]) + 2;
-		}
-		if(len == 0) {
-			return False;
-		}
-
-		data = XtMalloc(len + 1);
-		if(!data) {
-			return False;
-		}
-		data[0] = '\0';
-
-		for(i = 0; i < ctx->num_items; i++) {
-			if(i > 0) strcat(data, "\r\n");
-			strcat(data, "file://");
-			strcat(data, ctx->paths[i]);
-		}
-
-		*type = XA_TEXT_URI_LIST;
-		*format = 8;
-		*length = strlen(data);
-		*value = data;
-		return True;
-
-	} else if(*target == XA_STRING || *target == XA_UTF8_STRING) {
-		len = 0;
-		for(i = 0; i < ctx->num_items; i++) {
-			len += strlen(ctx->paths[i]) + 1;
-		}
-		if(len == 0) {
-			return False;
-		}
-
-		data = XtMalloc(len + 1);
-		if(!data) {
-			return False;
-		}
-		data[0] = '\0';
-
-		for(i = 0; i < ctx->num_items; i++) {
-			if(i > 0) strcat(data, " ");
-			strcat(data, ctx->paths[i]);
-		}
-
-		if(*target == XA_STRING)
-			mbs_to_latin1(data, data);
-
-		*type = *target;
-		*format = 8;
-		*length = strlen(data);
-		*value = data;
-		return True;
-
-	} else if(*target == XA_FILE_NAME) {
-		if(ctx->num_items == 0) {
-			return False;
-		}
-
-		data = XtMalloc(strlen(ctx->paths[0]) + 1);
-		if(!data) {
-			return False;
-		}
-		strcpy(data, ctx->paths[0]);
-
-		*type = XA_FILE_NAME;
-		*format = 8;
-		*length = strlen(data);
-		*value = data;
-		return True;
-
-	} else if(*target == XA_XFILE_FILE_LIST) {
-		char *path;
-		char *pos;
-
-		if(!ctx->dir_path || ctx->num_items == 0) {
-			return False;
-		}
-
-		path = realpath(ctx->dir_path, NULL);
-		if(!path) {
-			return False;
-		}
-
-		len = strlen(path) + 1;
-		for(i = 0; i < ctx->num_items; i++) {
-			len += strlen(ctx->names[i]) + 1;
-		}
-
-		data = XtMalloc(len + 1);
-		if(!data) {
-			free(path);
-			return False;
-		}
-
-		strcpy(data, path);
-		pos = data + strlen(path) + 1;
-		free(path);
-
-		for(i = 0; i < ctx->num_items; i++) {
-			strcpy(pos, ctx->names[i]);
-			pos += strlen(ctx->names[i]);
-			*pos = '\0';
-			pos++;
-		}
-		*pos = '\0';
-
-		*type = XA_XFILE_FILE_LIST;
-		*format = 8;
-		*length = len + 1;
-		*value = data;
-		return True;
-	}
-
-	return False;
-}
-
-static void
-dnd_operation_changed_cb(Widget w, XtPointer client_data, XtPointer call_data)
-{
-	struct dnd_drag_context *ctx = (struct dnd_drag_context*)client_data;
-	XmOperationChangedCallbackStruct *ocs =
-		(XmOperationChangedCallbackStruct*)call_data;
-
-	(void)w;
-
-	if(ctx == NULL || ocs == NULL) return;
-
-	ctx->operation = ocs->operation;
-}
-
-static void
-dnd_cleanup_cb(XtPointer client_data, XtIntervalId *id)
-{
-	struct dnd_drag_context *ctx = (struct dnd_drag_context*)client_data;
-	unsigned int i;
-	Widget icon;
-
-	(void)id;
-
-	dnd_active = False;
-	dnd_current_ctx = NULL;
-	if(dnd_prev_xerr != NULL) {
-		XSetErrorHandler(dnd_prev_xerr);
-		dnd_prev_xerr = NULL;
-	}
-
-	if(ctx == NULL) {
-		return;
-	}
-
-	ctx->magic = 0;
-
-	icon = ctx->drag_icon;
-	ctx->drag_icon = NULL;
-	if(icon != NULL && XtIsWidget(icon)) {
-		XtDestroyWidget(icon);
-	} else {
-	}
-
-	if(ctx->paths != NULL) {
-		for(i = 0; i < ctx->num_items; i++) {
-			if(ctx->paths[i] != NULL) XtFree(ctx->paths[i]);
-		}
-		XtFree((char*)ctx->paths);
-	}
-
-	if(ctx->names != NULL) {
-		for(i = 0; i < ctx->num_items; i++) {
-			if(ctx->names[i] != NULL) XtFree(ctx->names[i]);
-		}
-		XtFree((char*)ctx->names);
-	}
-
-	if(ctx->dir_path != NULL) XtFree(ctx->dir_path);
-
-	XtFree((char*)ctx);
-}
-
-static void
-dnd_drag_finish_cb(Widget w, XtPointer client_data, XtPointer call_data)
-{
-	struct dnd_drag_context *ctx = (struct dnd_drag_context*)client_data;
-	struct file_list_part *fl;
-
-	(void)w;
-	(void)call_data;
-
-	/* Belt-and-suspenders: stop suppressing BadAtom once the drag finishes. */
-	dnd_active = False;
-
-	if(xdnd_has_active_target()) {
-		xdnd_request_finish();
-	} else {
-		xdnd_end_drag();
-	}
-
-	/* Disown the custom DnD selection. */
-	if(dnd_current_ctx != NULL && dnd_current_ctx->source_widget != NULL) {
-		XtDisownSelection(dnd_current_ctx->source_widget,
-			XA_XFILE_DND_DATA, CurrentTime);
-	}
-	dnd_current_ctx = NULL;
-
-	if(ctx == NULL || ctx->magic != DND_CTX_MAGIC) return;
-
-	if(ctx->source_widget != NULL) {
-		fl = FL_PART(ctx->source_widget);
-		if(fl != NULL) fl->dnd_state = DND_NONE;
-	}
-
-	if(ctx->source_widget != NULL && XtIsWidget(ctx->source_widget)) {
-		force_update();
-		XtAppAddTimeOut(app_inst.context, 1000,
-			dnd_refresh_cb, (XtPointer)ctx->source_widget);
-	}
-
-	XtAppAddTimeOut(app_inst.context,
-		30000, dnd_cleanup_cb, (XtPointer)ctx);
-}
-
-static void __attribute__((unused))
-dnd_drag_end_cb(Widget w, XtPointer client_data, XtPointer call_data)
-{
-	struct dnd_drag_context *ctx = (struct dnd_drag_context*)client_data;
-	struct file_list_part *fl;
-
-	(void)w;
-	(void)call_data;
-
-	if(ctx != NULL && ctx->source_widget != NULL) {
-		fl = FL_PART(ctx->source_widget);
-		if(fl != NULL) fl->dnd_state = DND_NONE;
-	}
-}
-
-void
-dnd_register_drop_site(Widget wlist)
-{
-	Arg args[8];
-	Cardinal n = 0;
-
-	XtSetArg(args[n], XmNdropSiteOperations, DND_DROP_OPS); n++;
-	XtSetArg(args[n], XmNimportTargets, dnd_import_targets); n++;
-	XtSetArg(args[n], XmNnumImportTargets, DND_NUM_IMPORT_TARGETS); n++;
-	XtSetArg(args[n], XmNdropProc, dnd_drop_cb); n++;
-	XtSetArg(args[n], XmNdragProc, dnd_drag_site_cb); n++;
-
-	XmDropSiteRegister(wlist, args, n);
-}
-
-
-void
-dnd_init(Widget wlist)
-{
-	Display *dpy = XtDisplay(wlist);
-
-	XA_TEXT_URI_LIST = XInternAtom(dpy, "text/uri-list", False);
-	XA_FILE_NAME = XmInternAtom(dpy, XmSFILE_NAME, False);
-	XA_XFILE_FILE_LIST = XInternAtom(dpy, CS_FILE_LIST, False);
-	XA_UTF8_STRING = XInternAtom(dpy, "UTF8_STRING", False);
-	XA_TARGETS = XInternAtom(dpy, "TARGETS", False);
-	XA_TIMESTAMP = XInternAtom(dpy, "TIMESTAMP", False);
-	XA_XFILE_DND_DATA = XInternAtom(dpy, "_XFILE_DND_DATA", False);
-
-	dnd_export_targets[0] = XA_TEXT_URI_LIST;
-	dnd_export_targets[1] = XA_FILE_NAME;
-	dnd_export_targets[2] = XA_XFILE_FILE_LIST;
-	dnd_export_targets[3] = XA_UTF8_STRING;
-
-	dnd_import_targets[0] = XA_TEXT_URI_LIST;
-	dnd_import_targets[1] = XA_FILE_NAME;
-	dnd_import_targets[2] = XA_XFILE_FILE_LIST;
-	dnd_import_targets[3] = XA_UTF8_STRING;
-
-	wlist_ref = wlist;
-	dnd_register_drop_site(wlist);
-}
-
-void
-dnd_destroy(void)
-{
-	wlist_ref = NULL;
-}
-
-void
-dnd_start_drag(Widget w, XEvent *event)
-{
-	struct file_list_part *fl = FL_PART(w);
-	struct file_list_selection *sel;
-	struct dnd_drag_context *ctx;
-	Arg args[16];
-	Cardinal n = 0;
-	unsigned int i;
-	unsigned char operation;
-	Widget drag_context;
-	Widget drag_icon = NULL;
-
-
-	if(!fl->drag_and_drop) {
-		return;
-	}
-
-	sel = file_list_get_selection(w);
-	if(sel == NULL || sel->count == 0) {
-		return;
-	}
-
-
-	ctx = (struct dnd_drag_context*)XtMalloc(
-		sizeof(struct dnd_drag_context));
-	if(!ctx) return;
-
-	memset(ctx, 0, sizeof(struct dnd_drag_context));
-	ctx->magic = DND_CTX_MAGIC;
-	ctx->source_widget = w;
-	ctx->num_items = sel->count;
-	ctx->dir_path = dnd_dir_path_from_widget(w);
-	if(event != NULL) {
-		if(event->type == ButtonPress || event->type == ButtonRelease ||
-			event->type == MotionNotify) {
-			ctx->start_time = event->xbutton.time;
-		} else if(event->type == KeyPress || event->type == KeyRelease) {
-			ctx->start_time = event->xkey.time;
-		}
-	}
-
-	ctx->names = (char**)XtMalloc(sizeof(char*) * sel->count);
-	ctx->paths = (char**)XtMalloc(sizeof(char*) * sel->count);
-	if(!ctx->names || !ctx->paths) goto fail;
-
-	for(i = 0; i < sel->count; i++) {
-		ctx->names[i] = NULL;
-		ctx->paths[i] = NULL;
-	}
-
-	for(i = 0; i < sel->count; i++) {
-		ctx->names[i] = XtMalloc(strlen(sel->names[i]) + 1);
-		if(!ctx->names[i]) goto fail;
-		strcpy(ctx->names[i], sel->names[i]);
-
-		ctx->paths[i] = dnd_make_absolute_path(ctx->dir_path, sel->names[i]);
-		if(!ctx->paths[i]) goto fail;
-	}
-
-	if(fl->dnd_copy_modifier) {
-		operation = XmDROP_COPY;
-	} else if(fl->dnd_move_modifier) {
-		operation = XmDROP_MOVE;
-	} else {
-		operation = fl->dnd_default_op;
-	}
-	ctx->operation = operation;
-
-
-	if(sel->item.icon != None) {
-		drag_icon = dnd_create_drag_icon(w, sel->item.icon,
-			sel->item.icon_mask);
-	}
-	ctx->drag_icon = drag_icon;
-
-
-	ctx->drag_finish_rec[0].callback = dnd_drag_finish_cb;
-	ctx->drag_finish_rec[0].closure = (XtPointer)ctx;
-	ctx->drag_finish_rec[1].callback = NULL;
-	ctx->drag_finish_rec[1].closure = NULL;
-
-	ctx->op_changed_rec[0].callback = dnd_operation_changed_cb;
-	ctx->op_changed_rec[0].closure = (XtPointer)ctx;
-	ctx->op_changed_rec[1].callback = NULL;
-	ctx->op_changed_rec[1].closure = NULL;
-
-	XtSetArg(args[n], XmNconvertProc, dnd_convert_proc); n++;
-	XtSetArg(args[n], XmNexportTargets, dnd_export_targets); n++;
-	XtSetArg(args[n], XmNnumExportTargets, DND_NUM_EXPORT_TARGETS); n++;
-	XtSetArg(args[n], XmNdragOperations, DND_DRAG_OPS); n++;
-	if(drag_icon != NULL) {
-		XtSetArg(args[n], XmNsourceCursorIcon, drag_icon); n++;
-	}
-	XtSetArg(args[n], XmNclientData, (XtPointer)ctx); n++;
-	XtSetArg(args[n], XmNdragDropFinishCallback,
-		(XtCallbackList)ctx->drag_finish_rec); n++;
-	XtSetArg(args[n], XmNoperationChangedCallback,
-		(XtCallbackList)ctx->op_changed_rec); n++;
-
-	/*
-	 * Install the targeted BadAtom suppressor before starting the Motif
-	 * drag. It will be restored in dnd_cleanup_cb after the async Motif
-	 * selection conversion window has passed.
-	 */
-	dnd_active = True;
-	dnd_prev_xerr = XSetErrorHandler(dnd_xerror_handler);
-
-	dnd_current_ctx = ctx;
-
-	drag_context = XmDragStart(w, event, args, n);
-	if(drag_context == NULL) {
-		dnd_active = False;
-		dnd_current_ctx = NULL;
-		if(dnd_prev_xerr != NULL) {
-			XSetErrorHandler(dnd_prev_xerr);
-			dnd_prev_xerr = NULL;
-		}
-		goto fail;
-	}
-
-	if(drag_context != NULL) {
-		Time own_time;
-
-		xdnd_start_drag(w, event, (XtPointer)ctx);
-
-		own_time = (event->type == ButtonPress) ? event->xbutton.time : event->xkey.time;
-		(void)XtOwnSelection(w, XA_XFILE_DND_DATA, own_time,
-		    dnd_convert_proc, NULL, NULL);
-	}
-
-	fl->dnd_state = DND_DRAG;
-	return;
-
-fail:
-	if(ctx != NULL) {
-		if(ctx->paths != NULL) {
-			for(i = 0; i < ctx->num_items; i++) {
-				if(ctx->paths[i] != NULL) XtFree(ctx->paths[i]);
-			}
-			XtFree((char*)ctx->paths);
-		}
-		if(ctx->names != NULL) {
-			for(i = 0; i < ctx->num_items; i++) {
-				if(ctx->names[i] != NULL) XtFree(ctx->names[i]);
-			}
-			XtFree((char*)ctx->names);
-		}
-		if(ctx->dir_path != NULL) XtFree(ctx->dir_path);
-		if(drag_icon != NULL) XtDestroyWidget(drag_icon);
-		XtFree((char*)ctx);
-	}
 }
 
 static Boolean
@@ -741,21 +815,9 @@ dnd_clear_highlight(Widget w)
 	fl->dnd_highlight_active = False;
 }
 
-static void
-dnd_update_highlight(Widget w, Position x, Position y)
-{
-	struct file_list_part *fl = FL_PART(w);
-	unsigned int index;
-
-	dnd_clear_highlight(w);
-
-	if(!item_at_xy(w, x, y, &index)) return;
-	if(!S_ISDIR(fl->items[index].mode)) return;
-
-	fl->dnd_highlight_item = index;
-	fl->dnd_highlight_active = True;
-	dnd_highlight_item(w, index);
-}
+/* ========================================================================
+ * Motif drop target receiving (preserved for legacy compatibility)
+ * ======================================================================== */
 
 static void
 dnd_drag_site_cb(Widget w, XtPointer client, XtPointer call)
@@ -765,7 +827,6 @@ dnd_drag_site_cb(Widget w, XtPointer client, XtPointer call)
 	(void)client;
 
 	if(ds == NULL) return;
-
 
 	switch(ds->reason) {
 		case XmCR_DROP_SITE_ENTER_MESSAGE:
@@ -787,6 +848,22 @@ dnd_drag_site_cb(Widget w, XtPointer client, XtPointer call)
 	ds->dropSiteStatus = XmDROP_SITE_VALID;
 	if(ds->reason != XmCR_DROP_SITE_LEAVE_MESSAGE)
 		ds->operation = ds->operations;
+}
+
+static void
+dnd_update_highlight(Widget w, Position x, Position y)
+{
+	struct file_list_part *fl = FL_PART(w);
+	unsigned int index;
+
+	dnd_clear_highlight(w);
+
+	if(!item_at_xy(w, x, y, &index)) return;
+	if(!S_ISDIR(fl->items[index].mode)) return;
+
+	fl->dnd_highlight_item = index;
+	fl->dnd_highlight_active = True;
+	dnd_highlight_item(w, index);
 }
 
 static char *
@@ -812,9 +889,7 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 	Arg args[8];
 	Cardinal n = 0;
 	char *dest_dir;
-	char *source_dir;
 	Atom target;
-	struct dnd_drag_context *src_ctx;
 	struct dnd_transfer_data *td;
 	Widget transfer;
 
@@ -823,7 +898,6 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 	if(dropInfo == NULL) {
 		return;
 	}
-
 
 	if(dropInfo->dropAction == XmDROP_HELP) {
 		XtSetArg(args[0], XmNtransferStatus, XmTRANSFER_FAILURE);
@@ -841,37 +915,23 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 		}
 	}
 
-	src_ctx = NULL;
-	if(dropInfo->dragContext != NULL
-		&& XtDisplay(dropInfo->dragContext) == XtDisplay(w)) {
-		XtPointer cd = NULL;
-		XtSetArg(args[0], XmNclientData, &cd);
-		XtGetValues(dropInfo->dragContext, args, 1);
-		src_ctx = (struct dnd_drag_context*)cd;
+	/* Check if source is same directory as destination */
+	{
+		Widget src_widget = wlist_ref ? wlist_ref : app_inst.wlist;
+		if(src_widget != NULL && XtIsWidget(src_widget)) {
+			char *src_location = dnd_dir_path_from_widget(src_widget);
+			if(src_location && dest_dir && !strcmp(src_location, dest_dir)) {
+				XtSetArg(args[0], XmNtransferStatus, XmTRANSFER_FAILURE);
+				XtSetValues(w, args, 1);
+				free(src_location);
+				free(dest_dir);
+				return;
+			}
+			if(src_location) free(src_location);
+		}
 	}
-
-
-	source_dir = NULL;
-	if(src_ctx != NULL && src_ctx->source_widget != NULL
-		&& XtIsWidget(src_ctx->source_widget)
-		&& src_ctx->source_widget == w
-		&& src_ctx->dir_path != NULL) {
-		source_dir = realpath(src_ctx->dir_path, NULL);
-	}
-
-	if(source_dir != NULL && dest_dir != NULL &&
-		!strcmp(source_dir, dest_dir)) {
-		XtSetArg(args[0], XmNtransferStatus, XmTRANSFER_FAILURE);
-		XtSetValues(w, args, 1);
-		free(dest_dir);
-		free(source_dir);
-		return;
-	}
-
-	if(source_dir != NULL) free(source_dir);
 
 	target = XA_TEXT_URI_LIST;
-
 
 	td = (struct dnd_transfer_data*)malloc(sizeof(*td));
 	if(!td) {
@@ -882,58 +942,20 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 	}
 	td->dest_dir = dest_dir;
 	td->operation = dropInfo->operation;
+	td->drag_context = dropInfo->dragContext;
 
 	dnd_active = True;
 	if(dnd_prev_xerr == NULL) {
 		dnd_prev_xerr = XSetErrorHandler(dnd_xerror_handler);
 	}
 
-	if(src_ctx == NULL) {
-		Window owner;
-
-		td->drag_context = dropInfo->dragContext;
-
-		owner = XGetSelectionOwner(XtDisplay(w), XA_XFILE_DND_DATA);
-
-		if(owner != None) {
-			/* Cross-instance xfile DnD: use our custom selection atom.
-			 * The source xfile owns _XFILE_DND_DATA and will respond
-			 * via dnd_convert_proc. */
-			Atom selection_atom = XA_XFILE_DND_DATA;
-
-			XtGetSelectionValue(w, selection_atom, XA_TEXT_URI_LIST,
-				dnd_selection_callback, (XtPointer)td,
-				dropInfo->timeStamp);
-		} else {
-			/* External app DnD: fall back to Motif's built-in transfer.
-			 * The external app uses _MOTIF_DROP or XDnD protocol,
-			 * and XmDropTransferStart handles it (with BadAtom suppression). */
-			XmDropTransferEntryRec entry;
-
-			entry.client_data = (XtPointer)td;
-			entry.target = XA_TEXT_URI_LIST;
-
-			n = 0;
-			XtSetArg(args[n], XmNdropTransfers, &entry); n++;
-			XtSetArg(args[n], XmNnumDropTransfers, 1); n++;
-			XtSetArg(args[n], XmNtransferProc, dnd_transfer_cb); n++;
-			XtSetArg(args[n], XmNtransferStatus, XmTRANSFER_SUCCESS); n++;
-
-			transfer = XmDropTransferStart(dropInfo->dragContext, args, n);
-			if(transfer == NULL) {
-				dnd_active = False;
-				free(td->dest_dir);
-				free(td);
-				XtSetArg(args[0], XmNtransferStatus, XmTRANSFER_FAILURE);
-				XtSetValues(w, args, 1);
-			}
-		}
-	} else {
+	{
 		XmDropTransferEntryRec entry;
 
 		entry.client_data = (XtPointer)td;
 		entry.target = target;
 
+		n = 0;
 		XtSetArg(args[n], XmNdropTransfers, &entry); n++;
 		XtSetArg(args[n], XmNnumDropTransfers, 1); n++;
 		XtSetArg(args[n], XmNtransferProc, dnd_transfer_cb); n++;
@@ -948,209 +970,6 @@ dnd_drop_cb(Widget w, XtPointer client, XtPointer call)
 			XtSetValues(w, args, 1);
 		}
 	}
-}
-
-static void
-dnd_selection_callback(Widget w, XtPointer client_data,
-	Atom *selection, Atom *type, XtPointer value,
-	unsigned long *length, int *format)
-{
-	struct dnd_transfer_data *td = (struct dnd_transfer_data*)client_data;
-	char *dest_dir;
-	unsigned char operation;
-	Boolean success = False;
-	Arg args[4];
-	Cardinal n;
-
-	(void)w;
-	(void)selection;
-	(void)format;
-
-	if(td == NULL) {
-		if(value != NULL) XtFree((char*)value);
-		return;
-	}
-
-	dest_dir = td->dest_dir;
-	operation = td->operation;
-
-	if(type == NULL || length == NULL || value == NULL || *length == 0) {
-		if(td->drag_context != NULL && XtIsWidget(td->drag_context)) {
-			n = 0;
-			XtSetArg(args[n], XmNdropTransfers, NULL); n++;
-			XtSetArg(args[n], XmNnumDropTransfers, 0); n++;
-			XtSetArg(args[n], XmNtransferProc, NULL); n++;
-			XtSetArg(args[n], XmNtransferStatus, XmTRANSFER_FAILURE); n++;
-			XmDropTransferStart(td->drag_context, args, n);
-		}
-		free(td);
-		free(dest_dir);
-		dnd_active = False;
-		return;
-	}
-
-	if(*type == XA_TEXT_URI_LIST) {
-		char *data;
-		char *line;
-		char *next;
-		char **paths;
-		unsigned int count;
-		unsigned int i;
-		char *src_dir;
-
-		data = XtMalloc(*length + 1);
-		if(!data) {
-			goto fail;
-		}
-		memcpy(data, value, *length);
-		data[*length] = '\0';
-
-		for(count = 0, line = data; *line; ) {
-			if(*line == '#' || *line == '\r' || *line == '\n') {
-				line++;
-				continue;
-			}
-			count++;
-			while(*line && *line != '\r' && *line != '\n') line++;
-			if(*line == '\r') line++;
-			if(*line == '\n') line++;
-		}
-
-		if(count == 0) {
-			XtFree(data);
-			goto fail;
-		}
-
-		paths = (char**)XtMalloc(sizeof(char*) * count);
-		if(!paths) {
-			XtFree(data);
-			goto fail;
-		}
-
-		for(i = 0, line = data; *line; ) {
-			char *end;
-
-			if(*line == '#' || *line == '\r' || *line == '\n') {
-				line++;
-				continue;
-			}
-
-			end = line;
-			while(*end && *end != '\r' && *end != '\n') end++;
-			next = end;
-			if(*next == '\r') next++;
-			if(*next == '\n') next++;
-			*end = '\0';
-
-			paths[i] = dnd_uri_to_path(line);
-			i++;
-			line = next;
-		}
-
-		src_dir = NULL;
-		for(i = 0; i < count; i++) {
-			if(paths[i] != NULL) {
-				src_dir = strdup(paths[i]);
-				if(src_dir) {
-					char *tail = strrchr(src_dir, '/');
-					if(tail) *tail = '\0';
-				}
-				break;
-			}
-		}
-		if(!src_dir) {
-			for(i = 0; i < count; i++) free(paths[i]);
-			XtFree((char*)paths);
-			XtFree(data);
-			goto fail;
-		}
-
-		dnd_perform_operation(src_dir, paths, count, dest_dir, operation);
-		success = True;
-
-		free(src_dir);
-		for(i = 0; i < count; i++) free(paths[i]);
-		XtFree((char*)paths);
-		XtFree(data);
-	} else if(*type == XA_XFILE_FILE_LIST) {
-		char *val;
-		char *ptr;
-		char *sb;
-		char **list;
-		unsigned int nitems, i;
-		size_t len;
-		char *src_dir;
-
-		val = (char*)value;
-		len = *length;
-		ptr = val;
-		for(nitems = 0; ; ) {
-			if((size_t)(ptr - val) >= len || ptr[0] == '\0') {
-				nitems++;
-				if((size_t)(ptr - val) + 1 >= len || ptr[1] == '\0')
-					break;
-			}
-			ptr++;
-		}
-
-		if(nitems == 0) {
-			goto fail;
-		}
-
-		list = (char**)XtMalloc(sizeof(char*) * nitems);
-		if(!list) {
-			goto fail;
-		}
-
-		ptr = val;
-		sb = ptr;
-		for(i = 0; ; ) {
-			if((size_t)(ptr - val) >= len || ptr[0] == '\0') {
-				list[i] = sb;
-				i++;
-				sb = ptr + 1;
-				if((size_t)(ptr - val) + 1 >= len || ptr[1] == '\0')
-					break;
-			}
-			ptr++;
-		}
-
-		nitems--;
-		src_dir = realpath(list[0], NULL);
-		if(!src_dir) src_dir = strdup(list[0]);
-
-		if(src_dir) {
-			dnd_perform_operation(src_dir, list + 1, nitems, dest_dir,
-				operation);
-			success = True;
-			free(src_dir);
-		}
-
-		XtFree((char*)list);
-	} else {
-		goto fail;
-	}
-
-complete:
-	if(td->drag_context != NULL && XtIsWidget(td->drag_context)) {
-		n = 0;
-		XtSetArg(args[n], XmNdropTransfers, NULL); n++;
-		XtSetArg(args[n], XmNnumDropTransfers, 0); n++;
-		XtSetArg(args[n], XmNtransferProc, NULL); n++;
-		XtSetArg(args[n], XmNtransferStatus,
-			success ? XmTRANSFER_SUCCESS : XmTRANSFER_FAILURE); n++;
-		XmDropTransferStart(td->drag_context, args, n);
-	}
-
-	if(value != NULL) XtFree((char*)value);
-	free(td);
-	free(dest_dir);
-	dnd_active = False;
-	return;
-
-fail:
-	success = False;
-	goto complete;
 }
 
 static void
@@ -1177,7 +996,6 @@ dnd_transfer_cb(Widget w, XtPointer client_data,
 		if(value != NULL) XtFree((char*)value);
 		return;
 	}
-
 
 	dest_dir = td->dest_dir;
 	operation = td->operation;
@@ -1267,7 +1085,15 @@ dnd_transfer_cb(Widget w, XtPointer client_data,
 			return;
 		}
 
-		dnd_perform_operation(src_dir, paths, count, dest_dir, operation);
+		/* Map Motif operation to XfDROP_* */
+		{
+			unsigned char xf_op;
+			if(operation == XmDROP_MOVE) xf_op = XfDROP_MOVE;
+			else if(operation == XmDROP_LINK) xf_op = XfDROP_LINK;
+			else xf_op = XfDROP_COPY;
+
+			dnd_perform_operation(src_dir, paths, count, dest_dir, xf_op);
+		}
 
 		free(src_dir);
 		for(i = 0; i < count; i++) free(paths[i]);
@@ -1329,13 +1155,17 @@ dnd_transfer_cb(Widget w, XtPointer client_data,
 		if(!src_dir) src_dir = strdup(list[0]);
 
 		if(src_dir) {
-			dnd_perform_operation(src_dir, list + 1, n, dest_dir,
-				operation);
+			unsigned char xf_op;
+			if(operation == XmDROP_MOVE) xf_op = XfDROP_MOVE;
+			else if(operation == XmDROP_LINK) xf_op = XfDROP_LINK;
+			else xf_op = XfDROP_COPY;
+
+			dnd_perform_operation(src_dir, list + 1, n, dest_dir, xf_op);
 			free(src_dir);
-		} else {
 		}
 
 		XtFree((char*)list);
+
 	} else {
 		if(value != NULL) XtFree((char*)value);
 	}
@@ -1343,6 +1173,10 @@ dnd_transfer_cb(Widget w, XtPointer client_data,
 	free(dest_dir);
 	dnd_active = False;
 }
+
+/* ========================================================================
+ * URI-to-path conversion (preserved)
+ * ======================================================================== */
 
 static char *
 dnd_uri_to_path(const char *uri)
@@ -1402,6 +1236,10 @@ dnd_uri_to_path(const char *uri)
 	return path;
 }
 
+/* ========================================================================
+ * File operation dispatch (preserved)
+ * ======================================================================== */
+
 struct dnd_confirm_data {
 	char *src_dir;
 	char **names;
@@ -1421,54 +1259,6 @@ dnd_refresh_cb(XtPointer client_data, XtIntervalId *id)
 	if(app_inst.wlist && app_inst.wlist != wdest && XtIsWidget(app_inst.wlist))
 		force_update();
 }
-
-static Boolean
-dnd_move_confirm_wp(XtPointer client_data)
-{
-	struct dnd_confirm_data *cd = (struct dnd_confirm_data*)client_data;
-	enum mb_result res;
-	int rv;
-	Boolean refresh_src;
-	unsigned int i;
-
-	res = va_message_box(app_inst.wshell, MB_QUESTION, APP_TITLE,
-		"Move %u item%s from\n%s\nto\n%s?",
-		cd->count, cd->count == 1 ? "" : "s",
-		cd->src_dir, cd->dest_dir, NULL);
-
-	if(res != MBR_CONFIRM) {
-		free(cd->src_dir);
-		free(cd->dest_dir);
-		for(i = 0; i < cd->count; i++) free(cd->names[i]);
-		XtFree((char*)cd->names);
-		free(cd);
-		return True;
-	}
-
-	rv = move_files(cd->src_dir, cd->names, cd->count, cd->dest_dir);
-	refresh_src = (app_inst.wlist && app_inst.wlist != cd->dest_widget);
-
-	if(rv) {
-		va_message_box(app_inst.wshell, MB_ERROR, APP_TITLE,
-			"Could not complete requested action.\n%s.",
-			strerror(errno), NULL);
-	}
-
-	XtAppAddTimeOut(XtWidgetToApplicationContext(cd->dest_widget),
-		1000, dnd_refresh_cb, (XtPointer)cd->dest_widget);
-	if(refresh_src)
-		XtAppAddTimeOut(XtWidgetToApplicationContext(app_inst.wlist),
-			1000, dnd_refresh_cb, (XtPointer)app_inst.wlist);
-
-	free(cd->src_dir);
-	free(cd->dest_dir);
-	for(i = 0; i < cd->count; i++) free(cd->names[i]);
-	XtFree((char*)cd->names);
-	free(cd);
-	return True;
-}
-
-
 
 static void
 dnd_status_clear_cb(XtPointer client_data, XtIntervalId *id)
@@ -1490,7 +1280,7 @@ dnd_perform_operation(const char *src_dir, char **names,
 	int rv;
 	Boolean do_move = False;
 	Boolean do_copy = False;
- 	struct file_list_part *fl = NULL;
+	struct file_list_part *fl = NULL;
 	Widget dest_widget;
 
 	if(!src_dir || !dest_dir || count == 0) return;
@@ -1514,7 +1304,7 @@ dnd_perform_operation(const char *src_dir, char **names,
 		return;
 	}
 
-	if(operation == XmDROP_LINK) {
+	if(operation == XfDROP_LINK) {
 		set_status_text("Symbolic links not supported");
 		XtAppAddTimeOut(XtWidgetToApplicationContext(app_inst.wshell),
 			3000, dnd_status_clear_cb, NULL);
@@ -1525,13 +1315,12 @@ dnd_perform_operation(const char *src_dir, char **names,
 		return;
 	}
 
-	if(operation == XmDROP_COPY) {
+	if(operation == XfDROP_COPY) {
 		do_copy = True;
-	} else if(operation == XmDROP_MOVE) {
+	} else if(operation == XfDROP_MOVE) {
 		do_move = True;
 	} else {
-		/* Fallback: operation unclear (e.g. XmDROP default).
-		 * Default to copy for safety — move is destructive. */
+		/* Fallback: operation unclear. Default to copy for safety. */
 		do_copy = True;
 	}
 
@@ -1609,4 +1398,200 @@ dnd_perform_operation(const char *src_dir, char **names,
 	XtFree((char*)basenames);
 	free(wd);
 	free(dest);
+}
+
+static Boolean
+dnd_move_confirm_wp(XtPointer client_data)
+{
+	struct dnd_confirm_data *cd = (struct dnd_confirm_data*)client_data;
+	enum mb_result res;
+	int rv;
+	Boolean refresh_src;
+	unsigned int i;
+
+	res = va_message_box(app_inst.wshell, MB_QUESTION, APP_TITLE,
+		"Move %u item%s from\n%s\nto\n%s?",
+		cd->count, cd->count == 1 ? "" : "s",
+		cd->src_dir, cd->dest_dir, NULL);
+
+	if(res != MBR_CONFIRM) {
+		free(cd->src_dir);
+		free(cd->dest_dir);
+		for(i = 0; i < cd->count; i++) free(cd->names[i]);
+		XtFree((char*)cd->names);
+		free(cd);
+		return True;
+	}
+
+	rv = move_files(cd->src_dir, cd->names, cd->count, cd->dest_dir);
+	refresh_src = (app_inst.wlist && app_inst.wlist != cd->dest_widget);
+
+	if(rv) {
+		va_message_box(app_inst.wshell, MB_ERROR, APP_TITLE,
+			"Could not complete requested action.\n%s.",
+			strerror(errno), NULL);
+	}
+
+	XtAppAddTimeOut(XtWidgetToApplicationContext(cd->dest_widget),
+		1000, dnd_refresh_cb, (XtPointer)cd->dest_widget);
+	if(refresh_src)
+		XtAppAddTimeOut(XtWidgetToApplicationContext(app_inst.wlist),
+			1000, dnd_refresh_cb, (XtPointer)app_inst.wlist);
+
+	free(cd->src_dir);
+	free(cd->dest_dir);
+	for(i = 0; i < cd->count; i++) free(cd->names[i]);
+	XtFree((char*)cd->names);
+	free(cd);
+	return True;
+}
+
+/* ========================================================================
+ * Public API
+ * ======================================================================== */
+
+void
+dnd_register_drop_site(Widget wlist)
+{
+	Arg args[8];
+	Cardinal n = 0;
+
+	XtSetArg(args[n], XmNdropSiteOperations, DND_DROP_OPS); n++;
+	XtSetArg(args[n], XmNimportTargets, dnd_import_targets); n++;
+	XtSetArg(args[n], XmNnumImportTargets, DND_NUM_IMPORT_TARGETS); n++;
+	XtSetArg(args[n], XmNdropProc, dnd_drop_cb); n++;
+	XtSetArg(args[n], XmNdragProc, dnd_drag_site_cb); n++;
+
+	XmDropSiteRegister(wlist, args, n);
+}
+
+void
+dnd_init(Widget wlist)
+{
+	Display *dpy = XtDisplay(wlist);
+	Widget shell;
+	int rv;
+
+	XA_TEXT_URI_LIST = XInternAtom(dpy, "text/uri-list", False);
+	XA_FILE_NAME = XmInternAtom(dpy, XmSFILE_NAME, False);
+	XA_XFILE_FILE_LIST = XInternAtom(dpy, CS_FILE_LIST, False);
+	XA_UTF8_STRING = XInternAtom(dpy, "UTF8_STRING", False);
+	XA_TARGETS = XInternAtom(dpy, "TARGETS", False);
+	XA_TIMESTAMP = XInternAtom(dpy, "TIMESTAMP", False);
+	XA_XFILE_DND_DATA = XInternAtom(dpy, "_XFILE_DND_DATA", False);
+
+	dnd_import_targets[0] = XA_TEXT_URI_LIST;
+	dnd_import_targets[1] = XA_FILE_NAME;
+	dnd_import_targets[2] = XA_XFILE_FILE_LIST;
+	dnd_import_targets[3] = XA_UTF8_STRING;
+
+	wlist_ref = wlist;
+
+	/* Walk up the widget hierarchy to find the ApplicationShell.
+	 * XtParent(XtParent(wlist)) would only reach XmFrame, not the
+	 * shell — the hierarchy is: shell > XmMainWindow > XmFrame >
+	 * XmScrolledWindow > wlist. */
+	shell = wlist;
+	while (shell != NULL && !XtIsShell(shell))
+		shell = XtParent(shell);
+	rv = x11dnd_xt_init(shell);
+	if(rv != 0) {
+		stderr_msg("x11dnd_xt_init failed\n");
+	}
+
+	/* Cache XDnD action atoms */
+	XA_XdndActionCopy = XInternAtom(dpy, "XdndActionCopy", False);
+	XA_XdndActionMove = XInternAtom(dpy, "XdndActionMove", False);
+	XA_XdndActionLink = XInternAtom(dpy, "XdndActionLink", False);
+
+	/* Set up the X11DndClass callback table */
+	memset(&dnd_callbacks, 0, sizeof(dnd_callbacks));
+	dnd_callbacks.on_drag_begin = dnd_on_drag_begin;
+	dnd_callbacks.on_drag_end = dnd_on_drag_end;
+	dnd_callbacks.get_drag_data = dnd_get_drag_data;
+	dnd_callbacks.status_received = dnd_status_received;
+	dnd_callbacks.finished_received = dnd_finished_received;
+	dnd_callbacks.on_enter = dnd_on_enter;
+	dnd_callbacks.position_received = dnd_position_received;
+	dnd_callbacks.on_leave = dnd_on_leave;
+	dnd_callbacks.drop_received = dnd_drop_received;
+	dnd_callbacks.action_ask = dnd_action_ask;
+	dnd_callbacks.on_error = dnd_on_error;
+
+	/* Register the shell as an XDnD drop target */
+	rv = x11dnd_xt_register_target(shell, &dnd_callbacks);
+
+	/* Also register as a Motif drop site for legacy compatibility */
+	dnd_register_drop_site(wlist);
+
+	/* Motif's XmDropSiteRegister sets XdndAware on the file list widget's
+	 * window.  This confuses XDnD sources (GTK, Qt, Chromium) which walk
+	 * the window tree looking for XdndAware and send ClientMessages to
+	 * the first window they find — which would be the file list, not
+	 * the shell where our event handler is registered.  Remove the
+	 * property from the child window; our XDnD registration on the
+	 * shell window is sufficient for protocol discovery. */
+	if (XtIsRealized(wlist)) {
+		XDeleteProperty(XtDisplay(wlist), XtWindow(wlist),
+			XInternAtom(XtDisplay(wlist), "XdndAware", False));
+	}
+}
+
+void
+dnd_destroy(void)
+{
+	/* x11dnd_xt_destroy calls x11dnd_destroy internally */
+	x11dnd_xt_destroy();
+	wlist_ref = NULL;
+	dnd_source_session = NULL;
+}
+
+void
+dnd_start_drag(Widget w, XEvent *event)
+{
+	struct file_list_part *fl = FL_PART(w);
+	XButtonEvent *bev;
+	X11DndSourceSession *sess;
+	unsigned char operation;
+
+	if(!fl->drag_and_drop) {
+		return;
+	}
+
+	if(file_list_get_selection(w) == NULL
+		|| file_list_get_selection(w)->count == 0) {
+		return;
+	}
+
+	/* Determine default operation */
+	if(fl->dnd_copy_modifier) {
+		operation = XfDROP_COPY;
+	} else if(fl->dnd_move_modifier) {
+		operation = XfDROP_MOVE;
+	} else {
+		operation = fl->dnd_default_op;
+	}
+
+	(void)operation; /* operation mapping will be used when libx11dnd
+			    supports action selection in the future */
+
+	/* Install BadAtom suppressor for Motif interop */
+	dnd_active = True;
+	dnd_prev_xerr = XSetErrorHandler(dnd_xerror_handler);
+
+	/* Start the XDnD drag via libx11dnd */
+	bev = &event->xbutton;
+	sess = x11dnd_xt_start_drag(w, bev, &dnd_callbacks);
+	if(sess == NULL) {
+		dnd_active = False;
+		if(dnd_prev_xerr != NULL) {
+			XSetErrorHandler(dnd_prev_xerr);
+			dnd_prev_xerr = NULL;
+		}
+		return;
+	}
+
+	dnd_source_session = sess;
+	dnd_source_widget = w;
+	fl->dnd_state = DND_DRAG;
 }
