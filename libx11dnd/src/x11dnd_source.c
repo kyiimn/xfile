@@ -973,11 +973,16 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 
 	root = DefaultRootWindow(sess->dpy);
 
-	/* Find the deepest child window under the pointer */
+	/* Find the deepest window under the pointer */
 	child = None;
 	if (!XQueryPointer(sess->dpy, root,
 		&root_return, &child, &x, &y, &dest_x, &dest_y, &mask)) {
 		return;
+	}
+
+	/* Descend into the child window tree to find the deepest window */
+	if (child != None) {
+		child = x11dnd_find_window_at_point(sess->dpy, root, x, y);
 	}
 
 	/* Find the nearest XdndAware ancestor */
@@ -993,6 +998,11 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 		if (proxy != None) {
 			target = proxy;
 		}
+	}
+
+	/* Prevent self-drag: skip if the target is our own source window */
+	if (target == sess->source_win) {
+		target = None;
 	}
 
 	/* Target changed: send Leave to old, Enter to new */
