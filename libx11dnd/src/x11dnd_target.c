@@ -472,7 +472,14 @@ x11dnd_target_handle_leave(X11DndTargetSession *sess,
         return 0;
     }
 
-    (void)ev;
+    /* If a drop is pending, the source sends XdndLeave after XdndDrop
+     * as part of protocol teardown. We must not reset the session —
+     * the selection callback has not delivered the data yet. The
+     * session will be cleaned up by xt_selection_callback or
+     * x11dnd_target_reset_session after the data arrives. */
+    if (sess->state == X11DND_TARGET_DROP_PENDING) {
+        return 1;
+    }
 
     if (sess->callbacks && sess->callbacks->on_leave) {
         sess->callbacks->on_leave(sess);

@@ -406,11 +406,10 @@ dnd_position_received(X11DndTargetSession *sess,
 
 	*accept_ret = True;
 
-	if(action != None) {
-		*action_ret = action;
-	} else {
-		*action_ret = XA_XdndActionCopy;
-	}
+	/* Always respond with Move — the user will confirm or cancel
+	 * via the move/copy dialog, so the action we report back to
+	 * the source is not the final word on what actually happens. */
+	*action_ret = XA_XdndActionMove;
 
 	*rect_x = 0;
 	*rect_y = 0;
@@ -1391,7 +1390,7 @@ dnd_perform_operation(const char *src_dir, char **names,
 	dest_widget = wlist_ref ? wlist_ref : app_inst.wlist;
 	if(dest_widget) fl = FL_PART(dest_widget);
 
-	if(do_move && fl && fl->confirm_dnd_move) {
+	if((do_move || do_copy) && fl && fl->confirm_dnd_move) {
 		struct dnd_confirm_data *cd;
 
 		cd = (struct dnd_confirm_data*)malloc(
@@ -1452,7 +1451,8 @@ dnd_move_confirm_wp(XtPointer client_data)
 	unsigned int i;
 
 	res = va_message_box(app_inst.wshell, MB_QUESTION, APP_TITLE,
-		"Move %u item%s from\n%s\nto\n%s?",
+		"%s %u item%s from\n%s\nto\n%s?",
+		cd->operation == XfDROP_MOVE ? "Move" : "Copy",
 		cd->count, cd->count == 1 ? "" : "s",
 		cd->src_dir, cd->dest_dir, NULL);
 
@@ -1465,7 +1465,11 @@ dnd_move_confirm_wp(XtPointer client_data)
 		return True;
 	}
 
-	rv = move_files(cd->src_dir, cd->names, cd->count, cd->dest_dir);
+	if(cd->operation == XfDROP_MOVE) {
+		rv = move_files(cd->src_dir, cd->names, cd->count, cd->dest_dir);
+	} else {
+		rv = copy_files(cd->src_dir, cd->names, cd->count, cd->dest_dir);
+	}
 	refresh_src = (app_inst.wlist && app_inst.wlist != cd->dest_widget);
 
 	if(rv) {
