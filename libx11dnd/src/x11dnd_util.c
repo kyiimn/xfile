@@ -4,6 +4,7 @@
 #include "x11dnd_util.h"
 
 #include <X11/Xatom.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -219,6 +220,7 @@ x11dnd_send_client_message(Display *dpy, Window dest, Window source,
 {
 	XClientMessageEvent ev;
 	int status;
+	char *type_name;
 
 	(void)timestamp;
 
@@ -234,9 +236,18 @@ x11dnd_send_client_message(Display *dpy, Window dest, Window source,
 	ev.data.l[3] = data[3];
 	ev.data.l[4] = data[4];
 
+	type_name = XGetAtomName(dpy, type);
+	fprintf(stderr, "XSendEvent: type=%s dest=0x%lx src=0x%lx d1=%ld d2=0x%lx d3=%ld\n",
+		type_name ? type_name : "(null)",
+		(unsigned long)dest, (unsigned long)source,
+		data[1], (unsigned long)data[2], data[3]);
+	if (type_name) XFree(type_name);
+
 	status = XSendEvent(dpy, dest, False, NoEventMask,
 		(XEvent *)&ev);
 	XFlush(dpy);
+
+	fprintf(stderr, "XSendEvent returned: %d\n", status);
 
 	return status ? 0 : 1;
 }
