@@ -115,6 +115,12 @@ x11dnd_start_drag(Display *dpy, Window source_win, X11DndClass *callbacks,
 	 * silently fail if another client with higher priority grabbed it
 	 * or if the server rejected the ownership change. */
 	if (XGetSelectionOwner(dpy, atoms->XdndSelection) != source_win) {
+		Window actual_owner = XGetSelectionOwner(dpy, atoms->XdndSelection);
+		fprintf(stderr,
+			"x11dnd_start_drag: XdndSelection ownership FAILED for window 0x%lx "
+			"(actual owner=0x%lx, time=%lu)\n",
+			(unsigned long)source_win, (unsigned long)actual_owner,
+			(unsigned long)time);
 		if (callbacks && callbacks->on_error) {
 			callbacks->on_error(
 				"x11dnd_start_drag: failed to acquire XdndSelection ownership",
@@ -125,6 +131,10 @@ x11dnd_start_drag(Display *dpy, Window source_win, X11DndClass *callbacks,
 		free(sess);
 		return NULL;
 	}
+
+	fprintf(stderr,
+		"x11dnd_start_drag: XdndSelection ownership acquired for window 0x%lx (time=%lu)\n",
+		(unsigned long)source_win, (unsigned long)time);
 
 	active_source = sess;
 
@@ -896,6 +906,15 @@ x11dnd_source_handle_selection_clear(XEvent *ev)
 	}
 
 	sess = active_source;
+
+	fprintf(stderr,
+		"x11dnd_source_handle_selection_clear: event window=0x%lx, selection=%lu, time=%lu, source_win=0x%lx, start_time=%lu\n",
+		(unsigned long)ev->xselectionclear.window,
+		(unsigned long)ev->xselectionclear.selection,
+		(unsigned long)ev->xselectionclear.time,
+		sess ? (unsigned long)sess->source_win : 0UL,
+		sess ? (unsigned long)sess->start_time : 0UL);
+
 	if (sess == NULL) {
 		return 0;
 	}
