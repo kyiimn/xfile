@@ -728,6 +728,7 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 
 	sess = active_source;
 	if (sess == NULL) {
+		fprintf(stderr, "source_handle_selection_request: no active source\n");
 		return 0;
 	}
 
@@ -737,6 +738,9 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 	}
 
 	req = &ev->xselectionrequest;
+
+	fprintf(stderr, "source_handle_selection_request: target=%ld property=%ld requestor=0x%lx\n",
+		(long)req->target, (long)req->property, (unsigned long)req->requestor);
 
 	if (req->selection != atoms->XdndSelection) {
 		return 0;
@@ -878,6 +882,9 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 	}
 
 	prop_target = success ? req->property : None;
+
+	fprintf(stderr, "source_handle_selection_request: success=%d prop_target=%ld\n",
+		success, (long)prop_target);
 
 	if (success && data != NULL && req->property != None) {
 		XChangeProperty(sess->dpy, req->requestor, req->property,
