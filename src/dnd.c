@@ -68,12 +68,17 @@ static X11DndSourceSession *dnd_source_session = NULL;
 /* Source widget for the active drag (used in on_drag_end callback) */
 static Widget dnd_source_widget = NULL;
 
-/* Drag cursor state */
+/* Drag cursor state — single cursor with color changes (Motif approach) */
 static Cursor dnd_drag_cursor = None;
-static Cursor dnd_accept_cursor = None;
-static Cursor dnd_reject_cursor = None;
 static Boolean dnd_cursor_grabbed = False;
 static Display *dnd_cursor_dpy = NULL;
+static XColor dnd_color_valid;      /* Green — valid drop site */
+static XColor dnd_color_invalid;    /* Red — invalid drop site */
+static XColor dnd_color_neutral_fg; /* Widget foreground — no drop site */
+static XColor dnd_color_bg;         /* Widget background — cursor bg */
+static Colormap dnd_cursor_cmap = None;
+static unsigned long dnd_color_cells[2]; /* Allocated: green, red */
+static int dnd_num_color_cells = 0;
 
 /* libx11dnd callback table (static, lives for app lifetime) */
 static X11DndClass dnd_callbacks;
@@ -156,19 +161,88 @@ static void dnd_status_clear_cb(XtPointer client_data, XtIntervalId *id);
  * ======================================================================== */
 
 static void
-dnd_create_cursors(Display *dpy)
+dnd_create_cursors(Display *dpy, Widget source_widget)
 {
+	Colormap cmap;
+	XColor green_exact, green_screen;
+	XColor red_exact, red_screen;
+	XColor fg_exact;
+	XColor bg_exact;
+	Screen *screen;
+	Pixel fg_pixel, bg_pixel;
+
 	dnd_drag_cursor = XCreateFontCursor(dpy, XC_fleur);
-	dnd_accept_cursor = XCreateFontCursor(dpy, XC_top_left_corner);
-	dnd_reject_cursor = XCreateFontCursor(dpy, XC_X_cursor);
+
+	screen = DefaultScreenOfDisplay(dpy);
+	cmap = DefaultColormapOfScreen(screen);
+	dnd_cursor_cmap = cmap;
+	dnd_num_color_cells = 0;
+
+	green_exact.red = 0;
+	green_exact.green = 0xFFFF;
+	green_exact.blue = 0;
+	green_exact.flags = DoRed | DoGreen | DoBlue;
+	if(XAllocColor(dpy, cmap, &green_exact)) {
+		dnd_color_valid = green_exact;
+		dnd_color_cells[dnd_num_color_cells++] = green_exact.pixel;
+	} else {
+		XLookupColor(dpy, cmap, "green", &green_exact, &green_screen);
+		if(XAllocColor(dpy, cmap, &green_screen)) {
+			dnd_color_valid = green_screen;
+			dnd_color_cells[dnd_num_color_cells++] = green_screen.pixel;
+		} else {
+			dnd_color_valid.pixel = BlackPixelOfScreen(screen);
+			XQueryColor(dpy, cmap, &dnd_color_valid);
+		}
+	}
+
+	red_exact.red = 0xFFFF;
+	red_exact.green = 0;
+	red_exact.blue = 0;
+	red_exact.flags = DoRed | DoGreen | DoBlue;
+	if(XAllocColor(dpy, cmap, &red_exact)) {
+		dnd_color_invalid = red_exact;
+		dnd_color_cells[dnd_num_color_cells++] = red_exact.pixel;
+	} else {
+		XLookupColor(dpy, cmap, "red", &red_exact, &red_screen);
+		if(XAllocColor(dpy, cmap, &red_screen)) {
+			dnd_color_invalid = red_screen;
+			dnd_color_cells[dnd_num_color_cells++] = red_screen.pixel;
+		} else {
+			dnd_color_invalid.pixel = BlackPixelOfScreen(screen);
+			XQueryColor(dpy, cmap, &dnd_color_invalid);
+		}
+	}
+
+	if(source_widget && XtIsRealized(source_widget)) {
+		XtVaGetValues(source_widget,
+			XmNforeground, &fg_pixel,
+			XmNbackground, &bg_pixel,
+			NULL);
+		fg_exact.pixel = fg_pixel;
+		XQueryColor(dpy, cmap, &fg_exact);
+		dnd_color_neutral_fg = fg_exact;
+
+		bg_exact.pixel = bg_pixel;
+		XQueryColor(dpy, cmap, &bg_exact);
+		dnd_color_bg = bg_exact;
+	} else {
+		dnd_color_neutral_fg = dnd_color_valid;
+		bg_exact.pixel = WhitePixelOfScreen(screen);
+		XQueryColor(dpy, cmap, &bg_exact);
+		dnd_color_bg = bg_exact;
+	}
 }
 
 static void
 dnd_destroy_cursors(Display *dpy)
 {
 	if(dnd_drag_cursor != None) { XFreeCursor(dpy, dnd_drag_cursor); dnd_drag_cursor = None; }
-	if(dnd_accept_cursor != None) { XFreeCursor(dpy, dnd_accept_cursor); dnd_accept_cursor = None; }
-	if(dnd_reject_cursor != None) { XFreeCursor(dpy, dnd_reject_cursor); dnd_reject_cursor = None; }
+	if(dnd_cursor_cmap != None && dnd_num_color_cells > 0) {
+		XFreeColors(dpy, dnd_cursor_cmap, dnd_color_cells, dnd_num_color_cells, 0);
+		dnd_num_color_cells = 0;
+		dnd_cursor_cmap = None;
+	}
 }
 
 /* Called when a drag operation begins (after XdndEnter is sent) */
@@ -177,15 +251,20 @@ dnd_on_drag_begin(X11DndSourceSession *sess)
 {
 	Display *dpy;
 	Window root;
+	Widget src_widget;
 
 	if(sess == NULL) return;
 
 	dpy = x11dnd_source_get_display(sess);
 	if(dpy == NULL) return;
 
+	src_widget = dnd_source_widget;
+
 	if(dnd_drag_cursor == None) {
-		dnd_create_cursors(dpy);
+		dnd_create_cursors(dpy, src_widget);
 	}
+
+	XRecolorCursor(dpy, dnd_drag_cursor, &dnd_color_neutral_fg, &dnd_color_bg);
 
 	root = DefaultRootWindow(dpy);
 
@@ -210,6 +289,8 @@ dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 	if(sess == NULL) return;
 
 	if(dnd_cursor_grabbed && dnd_cursor_dpy != NULL) {
+		XRecolorCursor(dnd_cursor_dpy, dnd_drag_cursor,
+			&dnd_color_neutral_fg, &dnd_color_bg);
 		XUngrabPointer(dnd_cursor_dpy, CurrentTime);
 		XFlush(dnd_cursor_dpy);
 		dnd_cursor_grabbed = False;
@@ -379,13 +460,9 @@ dnd_status_received(X11DndSourceSession *sess, Bool accept,
 	if(dnd_drag_cursor == None) return;
 
 	if(accept) {
-		XChangeActivePointerGrab(dpy,
-			ButtonReleaseMask | ButtonPressMask | PointerMotionMask,
-			dnd_accept_cursor, CurrentTime);
+		XRecolorCursor(dpy, dnd_drag_cursor, &dnd_color_valid, &dnd_color_bg);
 	} else {
-		XChangeActivePointerGrab(dpy,
-			ButtonReleaseMask | ButtonPressMask | PointerMotionMask,
-			dnd_reject_cursor, CurrentTime);
+		XRecolorCursor(dpy, dnd_drag_cursor, &dnd_color_invalid, &dnd_color_bg);
 	}
 }
 
