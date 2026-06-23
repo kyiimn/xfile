@@ -35,6 +35,7 @@
 #include "x11dnd_util.h"
 
 #include <X11/Xatom.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -424,7 +425,14 @@ x11dnd_target_handle_drop(X11DndTargetSession *sess,
     if (sess == NULL || ev == NULL) {
         return 0;
     }
+
+    fprintf(stderr, "handle_drop: state=%d source=0x%lx target=0x%lx\n",
+        sess->state, (unsigned long)sess->source_win,
+        (unsigned long)sess->target_win);
+
 	if (sess->state != X11DND_TARGET_POSITION_RECEIVED) {
+		fprintf(stderr, "handle_drop: wrong state %d (expected %d), sending reject\n",
+			sess->state, X11DND_TARGET_POSITION_RECEIVED);
 		x11dnd_send_finished(sess->dpy, sess->source_win,
 			sess->target_win, False, None);
 		free_session_types(sess);
@@ -434,6 +442,7 @@ x11dnd_target_handle_drop(X11DndTargetSession *sess,
 
     atoms = x11dnd_get_atoms();
     if (atoms == NULL) {
+        fprintf(stderr, "handle_drop: atoms == NULL\n");
         x11dnd_send_finished(sess->dpy, sess->source_win,
             sess->target_win, False, None);
         free_session_types(sess);
@@ -447,12 +456,16 @@ x11dnd_target_handle_drop(X11DndTargetSession *sess,
 
     requested_type = select_best_type(sess, atoms);
     if (requested_type == None) {
+        fprintf(stderr, "handle_drop: no compatible type, sending reject\n");
         x11dnd_send_finished(sess->dpy, sess->source_win,
             sess->target_win, False, None);
         free_session_types(sess);
         sess->state = X11DND_TARGET_IDLE;
         return 1;
     }
+
+    fprintf(stderr, "handle_drop: requesting type=%ld property=%ld\n",
+        (long)requested_type, (long)atoms->XdndSelection);
 
     sess->requested_type = requested_type;
     sess->state = X11DND_TARGET_CONVERTING;
