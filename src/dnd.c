@@ -457,6 +457,8 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 
 	{
 		Atom action = x11dnd_target_get_action(sess);
+		fprintf(stderr, "dnd_drop_received: action=%ld XA_XdndActionMove=%ld XA_XdndActionCopy=%ld\n",
+			(long)action, (long)XA_XdndActionMove, (long)XA_XdndActionCopy);
 		if(action == XA_XdndActionMove) {
 			operation = XfDROP_MOVE;
 		} else {

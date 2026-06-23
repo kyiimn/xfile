@@ -35,8 +35,14 @@
 #include "x11dnd_util.h"
 
 #include <X11/Xatom.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* X ClientMessage data.l[] fields are 32-bit values that get sign-extended
+ * to 64-bit long on LP64 platforms. Mask with XCM32 to strip the upper bits
+ * when extracting Window, Atom, Time, or coordinate values. */
+#define XCM32(l)  ((unsigned long)(l) & 0xFFFFFFFFUL)
 
 /* Active INCR target session for the most recent selection conversion. */
 static X11DndIncrTargetSession *g_incr_target = NULL;
@@ -299,7 +305,7 @@ x11dnd_target_handle_enter(X11DndTargetSession *sess,
         return 0;
     }
 
-    source = (Window)ev->data.l[0];
+    source = (Window)XCM32(ev->data.l[0]);
     source_version = (int)((ev->data.l[1] >> 24) & 0xFF);
     more_types = (int)(ev->data.l[1] & 0x1);
 
@@ -333,9 +339,9 @@ x11dnd_target_handle_enter(X11DndTargetSession *sess,
             free(data);
         }
     } else {
-        inline_types[0] = (Atom)ev->data.l[2];
-        inline_types[1] = (Atom)ev->data.l[3];
-        inline_types[2] = (Atom)ev->data.l[4];
+        inline_types[0] = (Atom)XCM32(ev->data.l[2]);
+        inline_types[1] = (Atom)XCM32(ev->data.l[3]);
+        inline_types[2] = (Atom)XCM32(ev->data.l[4]);
 
         count = 0;
         for (i = 0; i < 3; i++) {
@@ -388,8 +394,8 @@ x11dnd_target_handle_position(X11DndTargetSession *sess,
 
     x = (int)((ev->data.l[2] >> 16) & 0xFFFF);
     y = (int)(ev->data.l[2] & 0xFFFF);
-    timestamp = (Time)ev->data.l[3];
-    action = (Atom)ev->data.l[4];
+    timestamp = (Time)XCM32(ev->data.l[3]);
+    action = (Atom)XCM32(ev->data.l[4]);
 
     sess->last_x = x;
     sess->last_y = y;
@@ -441,7 +447,7 @@ x11dnd_target_handle_drop(X11DndTargetSession *sess,
         return 1;
     }
 
-    timestamp = (Time)ev->data.l[2];
+    timestamp = (Time)XCM32(ev->data.l[2]);
     sess->drop_time = timestamp;
 
     requested_type = select_best_type(sess, atoms);
@@ -543,6 +549,8 @@ x11dnd_target_process_event(XEvent *ev)
     }
 
     if (cm->message_type == atoms->XdndDrop) {
+        fprintf(stderr, "XDND TARGET: XdndDrop received window=0x%lx source=0x%lx\n",
+            (unsigned long)cm->window, (unsigned long)cm->data.l[0]);
         return x11dnd_target_handle_drop(sess, cm);
     }
 

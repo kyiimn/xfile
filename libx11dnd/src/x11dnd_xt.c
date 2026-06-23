@@ -10,6 +10,7 @@
  * See the included COPYING file for further information.
  */
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <X11/Intrinsic.h>
@@ -392,6 +393,8 @@ xt_selection_callback(Widget w, XtPointer client_data, Atom *selection,
 			(unsigned char *)value, *length, *format);
 	}
 
+	fprintf(stderr, "xt_selection_callback: action=%ld\n", (long)sess->last_action);
+
 	x11dnd_send_finished(sess->dpy, sess->source_win,
 		sess->target_win, True, sess->last_action);
 
@@ -434,14 +437,28 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 			tsess = x11dnd_find_target_session(
 				ev->xclient.display,
 				ev->xclient.window);
+			fprintf(stderr, "XDND: XdndDrop consumed=%d window=0x%lx tsess=%p state=%d requested_type=%ld drop_time=%lu\n",
+				consumed, (unsigned long)ev->xclient.window,
+				(void*)tsess,
+				tsess ? tsess->state : -1,
+				tsess ? (long)tsess->requested_type : 0,
+				tsess ? (unsigned long)tsess->drop_time : 0);
 			if (tsess != NULL
 				&& tsess->state
 					== X11DND_TARGET_DROP_PENDING) {
+				fprintf(stderr, "XDND: Calling XtGetSelectionValue(shell=0x%lx, selection=%ld, type=%ld, time=%lu)\n",
+					(unsigned long)XtWindow(xt_shell),
+					(long)atoms->XdndSelection,
+					(long)tsess->requested_type,
+					(unsigned long)tsess->drop_time);
 				XtGetSelectionValue(xt_shell,
 					atoms->XdndSelection,
 					tsess->requested_type,
 					xt_selection_callback, NULL,
 					tsess->drop_time);
+			} else {
+				fprintf(stderr, "XDND: NOT calling XtGetSelectionValue (tsess=%p, state=%d)\n",
+					(void*)tsess, tsess ? tsess->state : -1);
 			}
 		}
 

@@ -17,6 +17,7 @@
 #include "x11dnd_atoms.h"
 #include "x11dnd_util.h"
 
+#include <stdio.h>
 #include <X11/Xatom.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -363,7 +364,7 @@ x11dnd_source_handle_status(X11DndSourceSession *sess,
 	y = (int)(ev->data.l[2] & 0xFFFF);
 	w = (int)((ev->data.l[3] >> 16) & 0xFFFF);
 	h = (int)(ev->data.l[3] & 0xFFFF);
-	action = (Atom)ev->data.l[4];
+	action = (Atom)(ev->data.l[4] & 0xFFFFFFFFUL);
 
 	sess->waiting_for_status = False;
 	sess->state = X11DND_SOURCE_ENTERED;
@@ -387,7 +388,7 @@ x11dnd_source_handle_finished(X11DndSourceSession *sess,
 	}
 
 	success = ev->data.l[1] ? True : False;
-	performed_action = (Atom)ev->data.l[2];
+	performed_action = (Atom)(ev->data.l[2] & 0xFFFFFFFFUL);
 
 	sess->state = X11DND_SOURCE_FINISHED;
 	sess->drop_completed = success;
@@ -722,6 +723,11 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 	}
 
 	req = &ev->xselectionrequest;
+
+	fprintf(stderr, "XDND SOURCE: SelectionRequest selection=%ld XdndSel=%ld target=%ld property=%ld requestor=0x%lx time=%lu\n",
+		(long)req->selection, (long)atoms->XdndSelection,
+		(long)req->target, (long)req->property,
+		(unsigned long)req->requestor, (unsigned long)req->time);
 
 	if (req->selection != atoms->XdndSelection) {
 		return 0;
