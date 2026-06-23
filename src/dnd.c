@@ -455,10 +455,14 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 		if(dest_dir == NULL) return;
 	}
 
-	/* Map the negotiated action to our operation.
-	 * We'll use XfDROP_COPY as default. The action was already
-	 * agreed upon in dnd_position_received. For now, use copy. */
-	operation = XfDROP_COPY;
+	{
+		Atom action = x11dnd_target_get_action(sess);
+		if(action == XA_XdndActionMove) {
+			operation = XfDROP_MOVE;
+		} else {
+			operation = XfDROP_COPY;
+		}
+	}
 
 	if(target == XA_TEXT_URI_LIST) {
 		char *buf;

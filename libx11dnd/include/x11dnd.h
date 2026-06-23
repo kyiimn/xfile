@@ -617,6 +617,14 @@ Display *x11dnd_target_get_display(X11DndTargetSession *sess);
  */
 int x11dnd_target_get_negotiated_version(X11DndTargetSession *sess);
 
+/**
+ * @brief Get the negotiated action from the last XdndPosition message.
+ * @param sess Target session handle.
+ * @return The action Atom (e.g., XdndActionCopy, XdndActionMove)
+ *         or None if no action was negotiated.
+ */
+Atom x11dnd_target_get_action(X11DndTargetSession *sess);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

@@ -598,6 +598,14 @@ x11dnd_target_get_negotiated_version(X11DndTargetSession *sess)
     return sess->negotiated_version;
 }
 
+Atom
+x11dnd_target_get_action(X11DndTargetSession *sess)
+{
+    if (sess == NULL)
+        return None;
+    return sess->last_action;
+}
+
 static Atom
 select_best_type(X11DndTargetSession *sess, const X11DndAtoms *atoms)
 {
