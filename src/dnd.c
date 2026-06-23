@@ -1558,6 +1558,14 @@ dnd_start_drag(Widget w, XEvent *event)
 		return;
 	}
 
+	/* Prevent re-entry: StartDrag is bound to <Btn1Motion> which
+	 * fires on every motion event. Once we've started an XDnD drag
+	 * (dnd_source_session != NULL), ignore further calls until the
+	 * drag completes and dnd_on_drag_end clears the session. */
+	if(dnd_source_session != NULL) {
+		return;
+	}
+
 	if(file_list_get_selection(w) == NULL
 		|| file_list_get_selection(w)->count == 0) {
 		return;
