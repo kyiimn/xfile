@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 #include <stdint.h>
 #include <X11/Xatom.h>
+#include <X11/cursorfont.h>
 #include <Xm/XmP.h>
 #include <Xm/DragDrop.h>
 #include <Xm/AtomMgr.h>
@@ -66,6 +67,13 @@ static X11DndSourceSession *dnd_source_session = NULL;
 
 /* Source widget for the active drag (used in on_drag_end callback) */
 static Widget dnd_source_widget = NULL;
+
+/* Drag cursor state */
+static Cursor dnd_drag_cursor = None;
+static Cursor dnd_accept_cursor = None;
+static Cursor dnd_reject_cursor = None;
+static Boolean dnd_cursor_grabbed = False;
+static Display *dnd_cursor_dpy = NULL;
 
 /* libx11dnd callback table (static, lives for app lifetime) */
 static X11DndClass dnd_callbacks;
@@ -147,12 +155,47 @@ static void dnd_status_clear_cb(XtPointer client_data, XtIntervalId *id);
  * libx11dnd callback implementations
  * ======================================================================== */
 
+static void
+dnd_create_cursors(Display *dpy)
+{
+	dnd_drag_cursor = XCreateFontCursor(dpy, XC_fleur);
+	dnd_accept_cursor = XCreateFontCursor(dpy, XC_top_left_corner);
+	dnd_reject_cursor = XCreateFontCursor(dpy, XC_X_cursor);
+}
+
+static void
+dnd_destroy_cursors(Display *dpy)
+{
+	if(dnd_drag_cursor != None) { XFreeCursor(dpy, dnd_drag_cursor); dnd_drag_cursor = None; }
+	if(dnd_accept_cursor != None) { XFreeCursor(dpy, dnd_accept_cursor); dnd_accept_cursor = None; }
+	if(dnd_reject_cursor != None) { XFreeCursor(dpy, dnd_reject_cursor); dnd_reject_cursor = None; }
+}
+
 /* Called when a drag operation begins (after XdndEnter is sent) */
 static void
 dnd_on_drag_begin(X11DndSourceSession *sess)
 {
-	(void)sess;
-	/* Nothing needed — we track state via dnd_source_session */
+	Display *dpy;
+	Window root;
+
+	if(sess == NULL) return;
+
+	dpy = x11dnd_source_get_display(sess);
+	if(dpy == NULL) return;
+
+	if(dnd_drag_cursor == None) {
+		dnd_create_cursors(dpy);
+	}
+
+	root = DefaultRootWindow(dpy);
+
+	if(XGrabPointer(dpy, root, False,
+			ButtonReleaseMask | ButtonPressMask | PointerMotionMask,
+			GrabModeAsync, GrabModeAsync, None,
+			dnd_drag_cursor, CurrentTime) == GrabSuccess) {
+		dnd_cursor_grabbed = True;
+		dnd_cursor_dpy = dpy;
+	}
 }
 
 /* Called when a drag operation ends (after XdndFinished or cancel) */
@@ -165,6 +208,12 @@ dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 	(void)completed;
 
 	if(sess == NULL) return;
+
+	if(dnd_cursor_grabbed && dnd_cursor_dpy != NULL) {
+		XUngrabPointer(dnd_cursor_dpy, CurrentTime);
+		XFlush(dnd_cursor_dpy);
+		dnd_cursor_grabbed = False;
+	}
 
 	src_widget = dnd_source_widget;
 
@@ -317,14 +366,27 @@ static void
 dnd_status_received(X11DndSourceSession *sess, Bool accept,
 	int x, int y, int w, int h, Atom action)
 {
-	(void)sess;
-	(void)accept;
-	(void)x;
-	(void)y;
-	(void)w;
-	(void)h;
+	Display *dpy;
+
+	(void)x; (void)y; (void)w; (void)h;
 	(void)action;
-	/* Could update cursor/feedback here; currently a no-op */
+
+	if(sess == NULL) return;
+
+	dpy = x11dnd_source_get_display(sess);
+	if(dpy == NULL || !dnd_cursor_grabbed) return;
+
+	if(dnd_drag_cursor == None) return;
+
+	if(accept) {
+		XChangeActivePointerGrab(dpy,
+			ButtonReleaseMask | ButtonPressMask | PointerMotionMask,
+			dnd_accept_cursor, CurrentTime);
+	} else {
+		XChangeActivePointerGrab(dpy,
+			ButtonReleaseMask | ButtonPressMask | PointerMotionMask,
+			dnd_reject_cursor, CurrentTime);
+	}
 }
 
 /* XdndFinished received from target (XDnD source) */
@@ -1575,6 +1637,12 @@ dnd_destroy(void)
 {
 	/* x11dnd_xt_destroy calls x11dnd_destroy internally */
 	x11dnd_xt_destroy();
+
+	if(dnd_cursor_dpy != NULL) {
+		dnd_destroy_cursors(dnd_cursor_dpy);
+		dnd_cursor_dpy = NULL;
+	}
+
 	wlist_ref = NULL;
 	dnd_source_session = NULL;
 }
