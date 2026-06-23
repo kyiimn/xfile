@@ -279,6 +279,7 @@ X11DndSourceSession *
 x11dnd_xt_start_drag(Widget w, XButtonEvent *event, X11DndClass *callbacks)
 {
 	Display *dpy;
+	Widget shell;
 	Window source_win;
 	X11DndSourceSession *sess;
 	const X11DndAtoms *atoms;
@@ -293,7 +294,17 @@ x11dnd_xt_start_drag(Widget w, XButtonEvent *event, X11DndClass *callbacks)
 		return NULL;
 
 	dpy = XtDisplay(w);
-	source_win = XtWindow(w);
+
+	/* Use the shell window as the drag source, not the child widget.
+	 * The shell window is where XdndAware is registered and where the
+	 * Xt event handler is installed. Using a child widget window as
+	 * the source conflicts with Motif DnD which may also try to own
+	 * XdndSelection on that window. */
+	shell = find_shell(w);
+	if (shell == NULL || !XtIsRealized(shell))
+		return NULL;
+
+	source_win = XtWindow(shell);
 
 	if (dpy == NULL || source_win == None)
 		return NULL;
