@@ -729,6 +729,10 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 
 	req = &ev->xselectionrequest;
 
+	fprintf(stderr, "handle_selection_request: selection=%ld target=%ld property=%ld requestor=0x%lx time=%lu\n",
+		(long)req->selection, (long)req->target, (long)req->property,
+		(unsigned long)req->requestor, (unsigned long)req->time);
+
 	if (req->selection != atoms->XdndSelection) {
 		return 0;
 	}
