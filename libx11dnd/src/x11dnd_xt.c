@@ -287,8 +287,8 @@ x11dnd_xt_start_drag(Widget w, XButtonEvent *event, X11DndClass *callbacks)
 	types[2] = atoms->STRING;
 	types[3] = atoms->FILE_NAME;
 
-	actions[0] = atoms->XdndActionCopy;
-	actions[1] = atoms->XdndActionMove;
+	actions[0] = atoms->XdndActionMove;
+	actions[1] = atoms->XdndActionCopy;
 
 	sess = x11dnd_start_drag(dpy, source_win, callbacks, start_time,
 		types, 4, actions, 2, NULL);
