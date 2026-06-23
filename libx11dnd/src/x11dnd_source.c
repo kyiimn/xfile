@@ -764,7 +764,6 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 				length = raw_len;
 				format = raw_fmt;
 				success = True;
-				goto done;
 			}
 			/* The callback provides paths as a NUL-separated or
 			 * newline-separated list. Split into an array.
