@@ -242,6 +242,8 @@ x11dnd_source_send_enter(X11DndSourceSession *sess, Window target)
 		XFlush(sess->dpy);
 	}
 
+	fprintf(stderr, "send_enter: sending XdndEnter to window 0x%lx from 0x%lx\n",
+		(unsigned long)target, (unsigned long)sess->source_win);
 	x11dnd_send_client_message(sess->dpy, target, sess->source_win,
 		atoms->XdndEnter, data, CurrentTime);
 
@@ -275,6 +277,8 @@ x11dnd_source_send_position(X11DndSourceSession *sess, Window target,
 	data[3] = (long)time;
 	data[4] = (long)action;
 
+	fprintf(stderr, "send_position: sending XdndPosition to window 0x%lx from 0x%lx x=%d y=%d\n",
+		(unsigned long)target, (unsigned long)sess->source_win, x, y);
 	x11dnd_send_client_message(sess->dpy, target, sess->source_win,
 		atoms->XdndPosition, data, time);
 
