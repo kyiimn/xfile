@@ -698,6 +698,10 @@ x11dnd_target_handle_selection_notify(XEvent *ev)
 
     sel = &ev->xselection;
 
+    fprintf(stderr, "handle_selection_notify: selection=%ld target=%ld property=%ld requestor=0x%lx\n",
+        (long)sel->selection, (long)sel->target, (long)sel->property,
+        (unsigned long)sel->requestor);
+
     atoms = x11dnd_get_atoms();
     if (atoms == NULL) {
         return 0;
