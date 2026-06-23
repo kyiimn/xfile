@@ -368,6 +368,7 @@ int
 x11dnd_xt_process_event(Widget w, XEvent *ev)
 {
 	int consumed = 0;
+	Bool source_session_ended = False;
 
 	if (ev == NULL)
 		return 0;
@@ -375,8 +376,20 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 	switch (ev->type) {
 	case ClientMessage:
 		consumed = x11dnd_target_process_event(ev);
-		if (!consumed)
+		if (!consumed) {
 			consumed = x11dnd_source_process_event(ev);
+			/* XdndFinished frees the source session, leaving
+			 * xt_active_source dangling. Detect this so we
+			 * can clean up the Xt work proc and timer. */
+			if (consumed && xt_active_source != NULL) {
+				const X11DndAtoms *atoms = x11dnd_get_atoms();
+				if (atoms != NULL
+					&& ev->xclient.message_type
+						== atoms->XdndFinished) {
+					source_session_ended = True;
+				}
+			}
+		}
 		break;
 
 	case SelectionNotify:
@@ -386,6 +399,12 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 	case SelectionRequest:
 	case SelectionClear:
 		consumed = x11dnd_source_process_event(ev);
+		/* SelectionClear calls x11dnd_cancel_drag which frees
+		 * the source session, leaving xt_active_source dangling. */
+		if (consumed && ev->type == SelectionClear
+			&& xt_active_source != NULL) {
+			source_session_ended = True;
+		}
 		break;
 
 	case PropertyNotify:
@@ -396,6 +415,21 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 
 	default:
 		break;
+	}
+
+	/* If the source session was freed by the event handler (XdndFinished
+	 * or SelectionClear), the Xt work proc and timer now hold dangling
+	 * pointers. Remove them and clear xt_active_source. */
+	if (source_session_ended) {
+		if (xt_work_proc_id != None) {
+			XtRemoveWorkProc(xt_work_proc_id);
+			xt_work_proc_id = None;
+		}
+		if (xt_poll_timer_id != None) {
+			XtRemoveTimeOut(xt_poll_timer_id);
+			xt_poll_timer_id = None;
+		}
+		xt_active_source = NULL;
 	}
 
 	return consumed;

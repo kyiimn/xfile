@@ -378,6 +378,14 @@ x11dnd_source_handle_finished(X11DndSourceSession *sess,
 		sess->callbacks->on_drag_end(sess, success);
 	}
 
+	if (active_source == sess) {
+		active_source = NULL;
+	}
+
+	free(sess->types);
+	free(sess->actions);
+	free(sess);
+
 	return 1;
 }
 
