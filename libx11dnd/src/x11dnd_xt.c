@@ -12,7 +12,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 #include <X11/Intrinsic.h>
 #include <X11/Xatom.h>
 #include "x11dnd_xt.h"
@@ -88,8 +87,6 @@ xt_drag_work_proc(XtPointer client_data)
 	if (sess == NULL)
 		return True;
 
-	fprintf(stderr, "drag_work_proc: called, sess=%p\n", (void *)sess);
-
 	x11dnd_source_track_motion(sess, 0, 0, CurrentTime);
 
 	return False;
@@ -108,8 +105,6 @@ xt_poll_timer_cb(XtPointer client_data, XtIntervalId *id)
 	sess = (X11DndSourceSession *)client_data;
 	if (sess == NULL)
 		return;
-
-	fprintf(stderr, "poll_timer_cb: called, sess=%p\n", (void *)sess);
 
 	x11dnd_source_track_motion(sess, 0, 0, CurrentTime);
 
@@ -365,9 +360,6 @@ xt_selection_callback(Widget w, XtPointer client_data, Atom *selection,
 	X11DndTargetSession *sess;
 	const X11DndAtoms *atoms;
 
-	fprintf(stderr, "xt_selection_callback: selection=%ld type=%ld value=%p length=%lu format=%d\n",
-		(long)*selection, (long)*type, value, *length, *format);
-
 	(void)client_data;
 	(void)selection;
 
@@ -426,12 +418,6 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 	switch (ev->type) {
 	case ClientMessage:
 	{
-		char *aname = XGetAtomName(ev->xclient.display,
-			ev->xclient.message_type);
-		fprintf(stderr, "xt_process_event: ClientMessage type=%s window=0x%lx\n",
-			aname ? aname : "(null)", (unsigned long)ev->xclient.window);
-		if (aname) XFree(aname);
-	}
 		consumed = x11dnd_target_process_event(ev);
 		if (!consumed)
 			consumed = x11dnd_source_process_event(ev);
@@ -456,8 +442,6 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 					tsess->requested_type,
 					xt_selection_callback, NULL,
 					tsess->drop_time);
-				fprintf(stderr, "xt_process_event: XdndDrop processed, calling XtGetSelectionValue type=%ld time=%lu\n",
-					(long)tsess->requested_type, (unsigned long)tsess->drop_time);
 			}
 		}
 
@@ -470,11 +454,11 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 				== atoms->XdndFinished) {
 			source_session_ended = True;
 		}
+	}
 		break;
 
 	case SelectionRequest:
 	case SelectionClear:
-		fprintf(stderr, "xt_process_event: SelectionRequest/Clear type=%d\n", ev->type);
 		consumed = x11dnd_source_process_event(ev);
 		/* SelectionClear calls x11dnd_cancel_drag which frees
 		 * the source session, leaving xt_active_source dangling. */

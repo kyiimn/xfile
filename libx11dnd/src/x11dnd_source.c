@@ -37,8 +37,6 @@ x11dnd_start_drag(Display *dpy, Window source_win, X11DndClass *callbacks,
 		return NULL;
 	}
 
-	fprintf(stderr, "start_drag: source_win=0x%lx\n", (unsigned long)source_win);
-
 	atoms = x11dnd_get_atoms();
 	if (atoms == NULL) {
 		if (callbacks && callbacks->on_error) {
@@ -242,8 +240,6 @@ x11dnd_source_send_enter(X11DndSourceSession *sess, Window target)
 		XFlush(sess->dpy);
 	}
 
-	fprintf(stderr, "send_enter: sending XdndEnter to window 0x%lx from 0x%lx\n",
-		(unsigned long)target, (unsigned long)sess->source_win);
 	x11dnd_send_client_message(sess->dpy, target, sess->source_win,
 		atoms->XdndEnter, data, CurrentTime);
 
@@ -277,8 +273,6 @@ x11dnd_source_send_position(X11DndSourceSession *sess, Window target,
 	data[3] = (long)time;
 	data[4] = (long)action;
 
-	fprintf(stderr, "send_position: sending XdndPosition to window 0x%lx from 0x%lx x=%d y=%d\n",
-		(unsigned long)target, (unsigned long)sess->source_win, x, y);
 	x11dnd_send_client_message(sess->dpy, target, sess->source_win,
 		atoms->XdndPosition, data, time);
 
@@ -729,10 +723,6 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 
 	req = &ev->xselectionrequest;
 
-	fprintf(stderr, "handle_selection_request: selection=%ld target=%ld property=%ld requestor=0x%lx time=%lu\n",
-		(long)req->selection, (long)req->target, (long)req->property,
-		(unsigned long)req->requestor, (unsigned long)req->time);
-
 	if (req->selection != atoms->XdndSelection) {
 		return 0;
 	}
@@ -890,23 +880,15 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 send_notify:
 	prop_target = success ? req->property : None;
 
-	fprintf(stderr, "handle_selection_request: success=%d prop_target=%ld data=%p length=%lu format=%d\n",
-		success, (long)prop_target, (void *)data, length, format);
-
 	if (success && data != NULL && req->property != None) {
 		XChangeProperty(sess->dpy, req->requestor, req->property,
 			req->target, format, PropModeReplace, data,
 			(int)length);
 		XFlush(sess->dpy);
-		fprintf(stderr, "handle_selection_request: XChangeProperty done on window 0x%lx property=%ld target=%ld format=%d length=%lu\n",
-			(unsigned long)req->requestor, (long)req->property,
-			(long)req->target, format, length);
 	}
 
 	send_selection_notify(sess->dpy, req->requestor, req->selection,
 		req->target, prop_target, req->time, success);
-	fprintf(stderr, "handle_selection_request: SelectionNotify sent success=%d property=%ld\n",
-		success, (long)prop_target);
 
 	if (data) {
 		free(data);
@@ -1029,8 +1011,6 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 		return;
 	}
 
-	fprintf(stderr, "track_motion: called, sess=%p state=%d\n", (void *)sess, sess->state);
-
 	if (sess->state == X11DND_SOURCE_DROP_SENT ||
 		sess->state == X11DND_SOURCE_FINISHED) {
 		return;
@@ -1050,10 +1030,8 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 		return;
 	}
 
-	fprintf(stderr, "track_motion: root_x=%d root_y=%d child=0x%lx\n", x, y, (unsigned long)child);
-
 	if (child == None) {
-		fprintf(stderr, "track_motion: no target under pointer\n");
+		/* No window under the pointer */
 	}
 
 	/* Descend into the child window tree to find the deepest window */
@@ -1081,16 +1059,12 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 		target = None;
 	}
 
-	fprintf(stderr, "track_motion: target=0x%lx aware=%d\n", (unsigned long)target, target != None ? 1 : 0);
-
 	/* Target changed: send Leave to old, Enter to new */
 	if (target != sess->current_target) {
 		if (sess->current_target != None) {
-			fprintf(stderr, "track_motion: sending XdndLeave to 0x%lx\n", (unsigned long)sess->current_target);
 			x11dnd_source_send_leave(sess, sess->current_target);
 		}
 		if (target != None) {
-			fprintf(stderr, "track_motion: sending XdndEnter to 0x%lx\n", (unsigned long)target);
 			x11dnd_source_send_enter(sess, target);
 		}
 	}
@@ -1098,7 +1072,6 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 	/* Send XdndPosition if we have a target and not waiting for status */
 	if (target != None && !sess->waiting_for_status) {
 		Atom action = sess->actions[0];
-		fprintf(stderr, "track_motion: sending XdndPosition to 0x%lx\n", (unsigned long)target);
 		x11dnd_source_send_position(sess, target, x, y, time, action);
 	}
 }
