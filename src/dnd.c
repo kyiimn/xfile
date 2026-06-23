@@ -70,7 +70,7 @@ static Widget dnd_source_widget = NULL;
 
 /* Drag cursor state — single cursor with color changes (Motif approach) */
 static Cursor dnd_drag_cursor = None;
-static Boolean dnd_cursor_grabbed = False;
+
 static Display *dnd_cursor_dpy = NULL;
 static XColor dnd_color_valid;      /* Green — valid drop site */
 static XColor dnd_color_invalid;    /* Red — invalid drop site */
@@ -250,8 +250,8 @@ static void
 dnd_on_drag_begin(X11DndSourceSession *sess)
 {
 	Display *dpy;
-	Window root;
 	Widget src_widget;
+	Widget shell;
 
 	if(sess == NULL) return;
 
@@ -266,14 +266,18 @@ dnd_on_drag_begin(X11DndSourceSession *sess)
 
 	XRecolorCursor(dpy, dnd_drag_cursor, &dnd_color_neutral_fg, &dnd_color_bg);
 
-	root = DefaultRootWindow(dpy);
-
-	if(XGrabPointer(dpy, root, True,
-			ButtonReleaseMask | ButtonPressMask | PointerMotionMask,
-			GrabModeAsync, GrabModeAsync, None,
-			dnd_drag_cursor, CurrentTime) == GrabSuccess) {
-		dnd_cursor_grabbed = True;
-		dnd_cursor_dpy = dpy;
+	/* Set the drag cursor on the source widget's shell window.
+	 * XDefineCursor doesn't grab the pointer — it just changes the
+	 * cursor shape when the pointer is over this window. This avoids
+	 * interfering with Xt's event dispatch. */
+	if(src_widget != NULL) {
+		shell = src_widget;
+		while(shell != NULL && !XtIsShell(shell))
+			shell = XtParent(shell);
+		if(shell != NULL && XtIsRealized(shell)) {
+			XDefineCursor(dpy, XtWindow(shell), dnd_drag_cursor);
+			dnd_cursor_dpy = dpy;
+		}
 	}
 }
 
@@ -282,21 +286,26 @@ static void
 dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 {
 	Widget src_widget;
+	Widget shell;
 	struct file_list_part *fl;
 
 	(void)completed;
 
 	if(sess == NULL) return;
 
-	if(dnd_cursor_grabbed && dnd_cursor_dpy != NULL) {
+	src_widget = dnd_source_widget;
+
+	if(dnd_cursor_dpy != NULL && dnd_drag_cursor != None) {
 		XRecolorCursor(dnd_cursor_dpy, dnd_drag_cursor,
 			&dnd_color_neutral_fg, &dnd_color_bg);
-		XUngrabPointer(dnd_cursor_dpy, CurrentTime);
-		XFlush(dnd_cursor_dpy);
-		dnd_cursor_grabbed = False;
 	}
 
-	src_widget = dnd_source_widget;
+	shell = src_widget;
+	while(shell != NULL && !XtIsShell(shell))
+		shell = XtParent(shell);
+	if(shell != NULL && XtIsRealized(shell)) {
+		XUndefineCursor(dnd_cursor_dpy, XtWindow(shell));
+	}
 
 	if(src_widget != NULL) {
 		fl = FL_PART(src_widget);
@@ -455,7 +464,7 @@ dnd_status_received(X11DndSourceSession *sess, Bool accept,
 	if(sess == NULL) return;
 
 	dpy = x11dnd_source_get_display(sess);
-	if(dpy == NULL || !dnd_cursor_grabbed) return;
+	if(dpy == NULL) return;
 
 	if(dnd_drag_cursor == None) return;
 
