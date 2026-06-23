@@ -374,6 +374,7 @@ x11dnd_source_handle_status(X11DndSourceSession *sess,
 	action = (Atom)ev->data.l[4];
 
 	sess->waiting_for_status = False;
+	sess->state = X11DND_SOURCE_ENTERED;
 
 	if (sess->callbacks && sess->callbacks->status_received) {
 		sess->callbacks->status_received(sess, accept, x, y, w, h, action);

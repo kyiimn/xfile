@@ -1623,7 +1623,9 @@ dnd_end_drag(void)
 		(unsigned long)dnd_source_session->current_target,
 		dnd_source_session->state);
 
-	if (dnd_source_session->current_target != None) {
+	if (dnd_source_session->current_target != None
+		&& dnd_source_session->state != X11DND_SOURCE_DROP_SENT
+		&& dnd_source_session->state != X11DND_SOURCE_FINISHED) {
 		/* Drop on a valid target: send XdndDrop and wait for
 		 * XdndFinished.  The on_drag_end callback will clean up
 		 * dnd_source_session once the target replies. */
@@ -1632,7 +1634,7 @@ dnd_end_drag(void)
 			dnd_source_session->start_time);
 		fprintf(stderr, "dnd_end_drag: XdndDrop sent to 0x%lx\n",
 			(unsigned long)dnd_source_session->current_target);
-	} else {
+	} else if (dnd_source_session->current_target == None) {
 		/* No target under pointer: cancel the drag.
 		 * x11dnd_xt_cancel_drag() sends XdndLeave, releases the
 		 * selection, removes the Xt work proc and timer, and
@@ -1641,5 +1643,8 @@ dnd_end_drag(void)
 		 * NULL here — the callback already does that. */
 		fprintf(stderr, "dnd_end_drag: no target, cancelling drag\n");
 		x11dnd_xt_cancel_drag();
+	} else {
+		fprintf(stderr, "dnd_end_drag: already in state %d, ignoring\n",
+			dnd_source_session->state);
 	}
 }
