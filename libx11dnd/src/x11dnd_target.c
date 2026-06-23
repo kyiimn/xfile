@@ -54,6 +54,8 @@ typedef struct {
 static X11DndTargetEntry g_targets[X11DND_MAX_TARGETS];
 static int g_n_targets = 0;
 
+static Atom select_best_type(X11DndTargetSession *sess, const X11DndAtoms *atoms);
+
 static X11DndTargetEntry *
 find_target(Display *dpy, Window win)
 {
@@ -414,7 +416,10 @@ int
 x11dnd_target_handle_drop(X11DndTargetSession *sess,
     XClientMessageEvent *ev)
 {
+    const X11DndAtoms *atoms;
     Time timestamp;
+    Atom requested_type;
+    Atom property;
 
     if (sess == NULL || ev == NULL) {
         return 0;
@@ -427,9 +432,35 @@ x11dnd_target_handle_drop(X11DndTargetSession *sess,
 		return 1;
 	}
 
+    atoms = x11dnd_get_atoms();
+    if (atoms == NULL) {
+        x11dnd_send_finished(sess->dpy, sess->source_win,
+            sess->target_win, False, None);
+        free_session_types(sess);
+        sess->state = X11DND_TARGET_IDLE;
+        return 1;
+    }
+
     timestamp = (Time)ev->data.l[2];
     sess->drop_time = timestamp;
     sess->state = X11DND_TARGET_DROP_PENDING;
+
+    requested_type = select_best_type(sess, atoms);
+    if (requested_type == None) {
+        x11dnd_send_finished(sess->dpy, sess->source_win,
+            sess->target_win, False, None);
+        free_session_types(sess);
+        sess->state = X11DND_TARGET_IDLE;
+        return 1;
+    }
+
+    sess->requested_type = requested_type;
+    sess->state = X11DND_TARGET_CONVERTING;
+
+    property = atoms->XdndSelection;
+    XConvertSelection(sess->dpy, atoms->XdndSelection, requested_type,
+        property, sess->target_win, sess->drop_time);
+    XFlush(sess->dpy);
 
     return 1;
 }
