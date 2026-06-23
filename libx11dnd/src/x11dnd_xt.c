@@ -18,7 +18,6 @@
 #include "x11dnd_atoms.h"
 #include "x11dnd_source.h"
 #include "x11dnd_target.h"
-#include <stdio.h>
 
 /* Module-level state for the Xt integration */
 static Display *xt_dpy = NULL;
@@ -26,6 +25,11 @@ static Widget xt_shell = NULL;
 static XtWorkProcId xt_work_proc_id = None;
 static XtIntervalId xt_poll_timer_id = None;
 static X11DndSourceSession *xt_active_source = NULL;
+
+/* Forward declaration for the Xt selection callback */
+static void xt_selection_callback(Widget w, XtPointer client_data,
+    Atom *selection, Atom *type, XtPointer value,
+    unsigned long *length, int *format);
 
 /* Event mask for XDnD events on the shell */
 #define XT_DND_EVENT_MASK (NoEventMask)
@@ -55,12 +59,20 @@ xt_event_handler(Widget w, XtPointer client_data, XEvent *ev,
 {
 	(void)w;
 	(void)client_data;
-	(void)continue_to_dispatch;
 
-	if (ev == NULL)
+	if (ev == NULL) {
+		if (continue_to_dispatch)
+			*continue_to_dispatch = True;
 		return;
+	}
 
-	(void)x11dnd_xt_process_event(w, ev);
+	if (x11dnd_xt_process_event(w, ev)) {
+		if (continue_to_dispatch)
+			*continue_to_dispatch = False;
+	} else {
+		if (continue_to_dispatch)
+			*continue_to_dispatch = True;
+	}
 }
 
 /* -------------------------------------------------------------------
@@ -334,6 +346,60 @@ x11dnd_xt_stop_tracking(void)
 }
 
 /* ===================================================================
+ * Xt selection callback: receives data from XtGetSelectionValue
+ *
+ * Xt calls this when the selection data is available. This replaces
+ * the raw SelectionNotify handler — Xt's internal selection
+ * machinery delivers the converted property data directly here.
+ * =================================================================== */
+
+static void
+xt_selection_callback(Widget w, XtPointer client_data, Atom *selection,
+    Atom *type, XtPointer value, unsigned long *length, int *format)
+{
+	X11DndTargetSession *sess;
+	const X11DndAtoms *atoms;
+
+	(void)client_data;
+	(void)selection;
+
+	atoms = x11dnd_get_atoms();
+	if (atoms == NULL) {
+		if (value) XtFree((char *)value);
+		return;
+	}
+
+	sess = x11dnd_find_target_session(XtDisplay(w), XtWindow(w));
+	if (sess == NULL) {
+		if (value) XtFree((char *)value);
+		return;
+	}
+
+	if (sess->state != X11DND_TARGET_DROP_PENDING) {
+		if (value) XtFree((char *)value);
+		return;
+	}
+
+	if (value == NULL || *length == 0 || *type == None) {
+		x11dnd_send_finished(sess->dpy, sess->source_win,
+			sess->target_win, False, None);
+		x11dnd_target_reset_session(sess);
+		return;
+	}
+
+	if (sess->callbacks && sess->callbacks->drop_received) {
+		sess->callbacks->drop_received(sess, *type,
+			(unsigned char *)value, *length, *format);
+	}
+
+	x11dnd_send_finished(sess->dpy, sess->source_win,
+		sess->target_win, True, sess->last_action);
+
+	XtFree((char *)value);
+	x11dnd_target_reset_session(sess);
+}
+
+/* ===================================================================
  * Public API: Event dispatch
  * =================================================================== */
 
@@ -342,48 +408,54 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 {
 	int consumed = 0;
 	Bool source_session_ended = False;
+	const X11DndAtoms *atoms;
 
 	if (ev == NULL)
 		return 0;
 
+	atoms = x11dnd_get_atoms();
+
 	switch (ev->type) {
-	case ClientMessage: {
-		char *aname = XGetAtomName(ev->xclient.display,
-			ev->xclient.message_type);
-		fprintf(stderr, "xt_process_event: ClientMessage type=%s window=0x%lx\n",
-			aname ? aname : "(null)",
-			(unsigned long)ev->xclient.window);
-		if (aname) XFree(aname);
+	case ClientMessage:
 		consumed = x11dnd_target_process_event(ev);
-		if (!consumed) {
+		if (!consumed)
 			consumed = x11dnd_source_process_event(ev);
-			/* XdndFinished frees the source session, leaving
-			 * xt_active_source dangling. Detect this so we
-			 * can clean up the Xt work proc and timer. */
-			if (consumed && xt_active_source != NULL) {
-				const X11DndAtoms *atoms = x11dnd_get_atoms();
-				if (atoms != NULL
-					&& ev->xclient.message_type
-						== atoms->XdndFinished) {
-					source_session_ended = True;
-				}
+
+		/* After the target processes XdndDrop, it sets the session
+		 * state to DROP_PENDING but does NOT call XConvertSelection.
+		 * In Xt mode we use XtGetSelectionValue instead, which
+		 * registers a proper Xt selection callback so that Xt delivers
+		 * the SelectionNotify to our callback instead of discarding it.
+		 */
+		if (consumed && atoms != NULL
+			&& ev->xclient.message_type == atoms->XdndDrop) {
+			X11DndTargetSession *tsess;
+			tsess = x11dnd_find_target_session(
+				ev->xclient.display,
+				ev->xclient.window);
+			if (tsess != NULL
+				&& tsess->state
+					== X11DND_TARGET_DROP_PENDING) {
+				XtGetSelectionValue(xt_shell,
+					atoms->XdndSelection,
+					tsess->requested_type,
+					xt_selection_callback, NULL,
+					tsess->drop_time);
 			}
 		}
-		break;
-	}
 
-	case SelectionNotify:
-		fprintf(stderr, "xt_process_event: SelectionNotify selection=%ld target=%ld property=%ld\n",
-			(long)ev->xselection.selection, (long)ev->xselection.target,
-			(long)ev->xselection.property);
-		consumed = x11dnd_target_handle_selection_notify(ev);
+		/* XdndFinished frees the source session, leaving
+		 * xt_active_source dangling. Detect this so we
+		 * can clean up the Xt work proc and timer. */
+		if (consumed && xt_active_source != NULL
+			&& atoms != NULL
+			&& ev->xclient.message_type
+				== atoms->XdndFinished) {
+			source_session_ended = True;
+		}
 		break;
 
 	case SelectionRequest:
-		fprintf(stderr, "xt_process_event: SelectionRequest selection=%ld target=%ld property=%ld requestor=0x%lx\n",
-			(long)ev->xselectionrequest.selection, (long)ev->xselectionrequest.target,
-			(long)ev->xselectionrequest.property,
-			(unsigned long)ev->xselectionrequest.requestor);
 	case SelectionClear:
 		consumed = x11dnd_source_process_event(ev);
 		/* SelectionClear calls x11dnd_cancel_drag which frees

@@ -115,12 +115,6 @@ x11dnd_start_drag(Display *dpy, Window source_win, X11DndClass *callbacks,
 	 * silently fail if another client with higher priority grabbed it
 	 * or if the server rejected the ownership change. */
 	if (XGetSelectionOwner(dpy, atoms->XdndSelection) != source_win) {
-		Window actual_owner = XGetSelectionOwner(dpy, atoms->XdndSelection);
-		fprintf(stderr,
-			"x11dnd_start_drag: XdndSelection ownership FAILED for window 0x%lx "
-			"(actual owner=0x%lx, time=%lu)\n",
-			(unsigned long)source_win, (unsigned long)actual_owner,
-			(unsigned long)time);
 		if (callbacks && callbacks->on_error) {
 			callbacks->on_error(
 				"x11dnd_start_drag: failed to acquire XdndSelection ownership",
@@ -131,10 +125,6 @@ x11dnd_start_drag(Display *dpy, Window source_win, X11DndClass *callbacks,
 		free(sess);
 		return NULL;
 	}
-
-	fprintf(stderr,
-		"x11dnd_start_drag: XdndSelection ownership acquired for window 0x%lx (time=%lu)\n",
-		(unsigned long)source_win, (unsigned long)time);
 
 	active_source = sess;
 
@@ -367,11 +357,6 @@ x11dnd_source_handle_status(X11DndSourceSession *sess,
 		|| sess->state == X11DND_SOURCE_FINISHED) {
 		return 1;
 	}
-
-	fprintf(stderr, "source_handle_status: from=0x%lx accept=%d state=%d\n",
-		(unsigned long)ev->data.l[0],
-		(int)(ev->data.l[1] & 0x1),
-		sess->state);
 
 	accept = (ev->data.l[1] & 0x1) ? True : False;
 	x = (int)((ev->data.l[2] >> 16) & 0xFFFF);
@@ -728,7 +713,6 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 
 	sess = active_source;
 	if (sess == NULL) {
-		fprintf(stderr, "source_handle_selection_request: no active source\n");
 		return 0;
 	}
 
@@ -738,9 +722,6 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 	}
 
 	req = &ev->xselectionrequest;
-
-	fprintf(stderr, "source_handle_selection_request: target=%ld property=%ld requestor=0x%lx\n",
-		(long)req->target, (long)req->property, (unsigned long)req->requestor);
 
 	if (req->selection != atoms->XdndSelection) {
 		return 0;
@@ -896,9 +877,6 @@ x11dnd_source_handle_selection_request(XEvent *ev)
 
 	prop_target = success ? req->property : None;
 
-	fprintf(stderr, "source_handle_selection_request: success=%d prop_target=%ld\n",
-		success, (long)prop_target);
-
 	if (success && data != NULL && req->property != None) {
 		XChangeProperty(sess->dpy, req->requestor, req->property,
 			req->target, format, PropModeReplace, data,
@@ -939,14 +917,6 @@ x11dnd_source_handle_selection_clear(XEvent *ev)
 	}
 
 	sess = active_source;
-
-	fprintf(stderr,
-		"x11dnd_source_handle_selection_clear: event window=0x%lx, selection=%lu, time=%lu, source_win=0x%lx, start_time=%lu\n",
-		(unsigned long)ev->xselectionclear.window,
-		(unsigned long)ev->xselectionclear.selection,
-		(unsigned long)ev->xselectionclear.time,
-		sess ? (unsigned long)sess->source_win : 0UL,
-		sess ? (unsigned long)sess->start_time : 0UL);
 
 	if (sess == NULL) {
 		return 0;
@@ -1033,7 +1003,6 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 	int dest_x, dest_y;
 	unsigned int mask;
 	Window root;
-	static int track_count = 0;
 
 	if (sess == NULL) {
 		return;
@@ -1058,12 +1027,6 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 		return;
 	}
 
-	track_count++;
-	if (track_count <= 5 || (track_count % 20) == 0) {
-		fprintf(stderr, "track_motion[%d]: state=%d child=0x%lx x=%d y=%d\n",
-			track_count, sess->state, (unsigned long)child, x, y);
-	}
-
 	/* Descend into the child window tree to find the deepest window */
 	if (child != None) {
 		child = x11dnd_find_window_at_point(sess->dpy, root, x, y);
@@ -1072,8 +1035,6 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 	/* Find the nearest XdndAware ancestor */
 	if (child != None) {
 		target = x11dnd_find_aware_ancestor(sess->dpy, child);
-		fprintf(stderr, "track_motion: find_aware_ancestor(0x%lx) = 0x%lx\n",
-			(unsigned long)child, (unsigned long)target);
 	} else {
 		target = None;
 	}
@@ -1082,23 +1043,17 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 	if (target != None) {
 		proxy = x11dnd_validate_proxy(sess->dpy, target);
 		if (proxy != None) {
-			fprintf(stderr, "track_motion: proxy 0x%lx -> 0x%lx\n",
-				(unsigned long)target, (unsigned long)proxy);
 			target = proxy;
 		}
 	}
 
 	/* Prevent self-drag: skip if the target is our own source window */
 	if (target == sess->source_win) {
-		fprintf(stderr, "track_motion: self-drag detected, skipping (target=0x%lx=source)\n",
-			(unsigned long)target);
 		target = None;
 	}
 
 	/* Target changed: send Leave to old, Enter to new */
 	if (target != sess->current_target) {
-		fprintf(stderr, "track_motion: target changed old=0x%lx new=0x%lx\n",
-			(unsigned long)sess->current_target, (unsigned long)target);
 		if (sess->current_target != None) {
 			x11dnd_source_send_leave(sess, sess->current_target);
 		}

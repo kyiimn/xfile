@@ -439,22 +439,10 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 	Bool success = False;
 
 	if(sess == NULL || data == NULL || length == 0) {
-		fprintf(stderr, "dnd_drop_received: early return sess=%p data=%p length=%lu\n",
-			(void*)sess, (void*)data, length);
 		return;
 	}
 
-	fprintf(stderr, "dnd_drop_received: target=%ld data=%p length=%lu format=%d\n",
-		(long)target, (void*)data, length, format);
-
-	if(data && length > 0 && length < 256) {
-		fprintf(stderr, "dnd_drop_received: data='%.*s'\n", (int)length, (char*)data);
-	}
-
 	w = wlist_ref;
-	if(w == NULL) {
-		fprintf(stderr, "dnd_drop_received: wlist_ref is NULL\n");
-	}
 
 	dpy = x11dnd_target_get_display(sess);
 	source_win = x11dnd_target_get_source_window(sess);
@@ -532,16 +520,9 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 			}
 		}
 
-		fprintf(stderr, "dnd_drop_received: src_dir='%s' dest_dir='%s'\n",
-			src_dir ? src_dir : "(null)", dest_dir ? dest_dir : "(null)");
-
 		if(src_dir) {
-			/* Avoid same-directory drops */
 			char *wd = realpath(src_dir, NULL);
-			fprintf(stderr, "dnd_drop_received: wd='%s' strcmp=%d\n",
-				wd ? wd : "(null)", (wd && dest_dir) ? strcmp(wd, dest_dir) : -1);
 			if(wd && dest_dir && !strcmp(wd, dest_dir)) {
-				fprintf(stderr, "dnd_drop_received: same directory, skipping\n");
 				free(wd);
 			} else {
 				free(wd);
@@ -1633,13 +1614,8 @@ void
 dnd_end_drag(void)
 {
 	if (dnd_source_session == NULL) {
-		fprintf(stderr, "dnd_end_drag: no active session\n");
 		return;
 	}
-
-	fprintf(stderr, "dnd_end_drag: target=0x%lx state=%d\n",
-		(unsigned long)dnd_source_session->current_target,
-		dnd_source_session->state);
 
 	if (dnd_source_session->current_target != None
 		&& dnd_source_session->state != X11DND_SOURCE_DROP_SENT
@@ -1647,18 +1623,12 @@ dnd_end_drag(void)
 		x11dnd_source_send_drop(dnd_source_session,
 			dnd_source_session->current_target,
 			dnd_source_session->start_time);
-		fprintf(stderr, "dnd_end_drag: XdndDrop sent to 0x%lx\n",
-			(unsigned long)dnd_source_session->current_target);
 		/* Stop tracking — the drop has been sent. XdndFinished
 		 * or SelectionClear will clean up the session via the
 		 * on_drag_end callback.  Remove the Xt work proc and
 		 * timer so they stop calling track_motion. */
 		x11dnd_xt_stop_tracking();
 	} else if (dnd_source_session->current_target == None) {
-		fprintf(stderr, "dnd_end_drag: no target, cancelling drag\n");
 		x11dnd_xt_cancel_drag();
-	} else {
-		fprintf(stderr, "dnd_end_drag: already in state %d, ignoring\n",
-			dnd_source_session->state);
 	}
 }

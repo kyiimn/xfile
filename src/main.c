@@ -415,17 +415,7 @@ int main(int argc, char **argv)
 	map_shell_unpos(app_inst.wshell);
 	
 	set_location(open_spec, True);
-
-	for (;;) {
-		XEvent ev;
-		while (XtAppPending(app_inst.context)) {
-			XtAppNextEvent(app_inst.context, &ev);
-			if (!x11dnd_xt_process_event(NULL, &ev)) {
-				XtDispatchEvent(&ev);
-			}
-		}
-		XtAppProcessEvent(app_inst.context, XtIMAll);
-	}
+	XtAppMainLoop(app_inst.context);
 	return 0;
 }
 

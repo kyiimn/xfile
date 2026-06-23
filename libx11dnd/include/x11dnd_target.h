@@ -76,6 +76,9 @@ int x11dnd_target_handle_drop(X11DndTargetSession *sess,
 int x11dnd_target_handle_leave(X11DndTargetSession *sess,
     XClientMessageEvent *ev);
 
+X11DndTargetSession *x11dnd_find_target_session(Display *dpy, Window win);
+void x11dnd_target_reset_session(X11DndTargetSession *sess);
+
 /*
  * Request selection conversion after XdndDrop. The application should
  * call this from its drop callback to request the drag data. Selects
