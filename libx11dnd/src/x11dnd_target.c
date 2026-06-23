@@ -37,6 +37,7 @@
 #include <X11/Xatom.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 /* Active INCR target session for the most recent selection conversion. */
 static X11DndIncrTargetSession *g_incr_target = NULL;
@@ -455,6 +456,10 @@ x11dnd_target_handle_drop(X11DndTargetSession *sess,
 
     sess->requested_type = requested_type;
     sess->state = X11DND_TARGET_DROP_PENDING;
+
+    fprintf(stderr, "handle_drop: state=DROP_PENDING source=0x%lx target=0x%lx type=%ld\n",
+        (unsigned long)sess->source_win, (unsigned long)sess->target_win,
+        (long)sess->requested_type);
 
     return 1;
 }
