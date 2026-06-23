@@ -75,6 +75,12 @@ static Atom XA_XdndActionCopy = None;
 static Atom XA_XdndActionMove = None;
 static Atom XA_XdndActionLink = None;
 
+/* Drop target info saved by dnd_position_received for dnd_drop_received.
+ * The visual highlight gets cleared before dnd_drop_received runs (e.g.,
+ * by an XdndPosition over empty space or by the selection callback timing),
+ * so we save the directory name separately. */
+static char *dnd_saved_dest_name = NULL;
+
 /*
  * Targeted X error handler for Motif DnD operations.
  *
@@ -388,9 +394,14 @@ dnd_position_received(X11DndTargetSession *sess,
 
 	if(item_at_xy(w, wx, wy, &index)
 		&& S_ISDIR(fl->items[index].mode)) {
+		fprintf(stderr, "dnd_position_received: highlighting item %u (dir '%s')\n", index, fl->items[index].name);
 		dnd_highlight_item(w, index);
+		if(dnd_saved_dest_name) XtFree(dnd_saved_dest_name);
+		dnd_saved_dest_name = XtNewString(fl->items[index].name);
 	} else {
+		fprintf(stderr, "dnd_position_received: clearing highlight (no dir at %d,%d)\n", (int)wx, (int)wy);
 		dnd_clear_highlight(w);
+		if(dnd_saved_dest_name) { XtFree(dnd_saved_dest_name); dnd_saved_dest_name = NULL; }
 	}
 
 	*accept_ret = True;
@@ -412,10 +423,12 @@ static void
 dnd_on_leave(X11DndTargetSession *sess)
 {
 	(void)sess;
+	fprintf(stderr, "dnd_on_leave called\n");
 
 	if(wlist_ref != NULL) {
 		dnd_clear_highlight(wlist_ref);
 	}
+	if(dnd_saved_dest_name) { XtFree(dnd_saved_dest_name); dnd_saved_dest_name = NULL; }
 }
 
 /* Drop data received (after SelectionNotify) — the main XDnD drop handler */
@@ -449,14 +462,15 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 	source_win = x11dnd_target_get_source_window(sess);
 	target_win = x11dnd_target_get_window(sess);
 
-	/* Determine destination directory: if a directory item is highlighted
-	 * (from dnd_position_received), drop into that directory. Otherwise
-	 * fall back to the window's current directory. */
+	/* Determine destination directory: if a directory item was highlighted
+	 * during drag tracking (saved in dnd_saved_dest_name), drop into
+	 * that directory. Otherwise fall back to the window's current dir. */
 	fl = FL_PART(w);
-	if(fl && fl->dnd_highlight_active && fl->dnd_highlight_item < fl->num_items
-		&& S_ISDIR(fl->items[fl->dnd_highlight_item].mode)) {
+	fprintf(stderr, "dnd_drop_received: fl=%p saved_dest='%s'\n",
+		(void*)fl, dnd_saved_dest_name ? dnd_saved_dest_name : "(null)");
+	if(dnd_saved_dest_name) {
 		char *tmp = dnd_make_absolute_path(app_inst.location,
-			fl->items[fl->dnd_highlight_item].name);
+			dnd_saved_dest_name);
 		if(tmp) {
 			dest_dir = realpath(tmp, NULL);
 			XtFree(tmp);
@@ -472,6 +486,9 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 
 	{
 		Atom action = x11dnd_target_get_action(sess);
+		fprintf(stderr, "dnd_drop_received: action=%ld Move=%ld Copy=%ld target=%ld XA_URI=%ld\n",
+			(long)action, (long)XA_XdndActionMove, (long)XA_XdndActionCopy,
+			(long)target, (long)XA_TEXT_URI_LIST);
 		if(action == XA_XdndActionMove) {
 			operation = XfDROP_MOVE;
 		} else {
@@ -541,6 +558,9 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 
 		if(src_dir) {
 			char *wd = realpath(src_dir, NULL);
+			fprintf(stderr, "dnd_drop_received: src_dir='%s' wd='%s' dest_dir='%s' same=%d\n",
+				src_dir, wd ? wd : "(null)", dest_dir ? dest_dir : "(null)",
+				wd && dest_dir && !strcmp(wd, dest_dir));
 			if(wd && dest_dir && !strcmp(wd, dest_dir)) {
 				free(wd);
 			} else {
@@ -671,6 +691,7 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 	free(dest_dir);
 
 	dnd_clear_highlight(w);
+	if(dnd_saved_dest_name) { XtFree(dnd_saved_dest_name); dnd_saved_dest_name = NULL; }
 
 	/* Send XdndFinished */
 	if(dpy != NULL && source_win != None && target_win != None) {

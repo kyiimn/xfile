@@ -1054,10 +1054,11 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 		}
 	}
 
-	/* Prevent self-drag: skip if the target is our own source window */
-	if (target == sess->source_win) {
-		target = None;
-	}
+	/* Same-window drops are valid in XDnD: the source window can send
+	 * protocol messages to itself. This is how same-window file manager
+	 * drag-and-drop works (e.g., dragging a file into a subdirectory
+	 * icon within the same window). GTK and Qt file managers support
+	 * this. Only skip if there is genuinely no XdndAware target. */
 
 	/* Target changed: send Leave to old, Enter to new */
 	if (target != sess->current_target) {
