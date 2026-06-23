@@ -438,6 +438,9 @@ dnd_drop_received(X11DndTargetSession *sess, Atom target,
 	Window target_win;
 	Bool success = False;
 
+	fprintf(stderr, "dnd_drop_received: target=%ld XA_TEXT_URI_LIST=%ld data=%p length=%lu format=%d\n",
+		(long)target, (long)XA_TEXT_URI_LIST, (void *)data, length, format);
+
 	if(sess == NULL || data == NULL || length == 0) {
 		return;
 	}
