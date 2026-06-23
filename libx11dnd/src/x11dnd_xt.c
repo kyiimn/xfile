@@ -69,35 +69,12 @@ static Boolean
 xt_drag_work_proc(XtPointer client_data)
 {
 	X11DndSourceSession *sess;
-	Display *dpy;
-	Window root, child;
-	int root_x, root_y, child_x, child_y;
-	unsigned int mask;
-	Bool query_ok;
-	XEvent ev;
 
 	sess = (X11DndSourceSession *)client_data;
 	if (sess == NULL)
 		return True;
 
-	dpy = x11dnd_source_get_display(sess);
-	if (dpy == NULL)
-		return True;
-
-	query_ok = XQueryPointer(dpy, DefaultRootWindow(dpy),
-		&root, &child, &root_x, &root_y,
-		&child_x, &child_y, &mask);
-
-	if (query_ok) {
-		memset(&ev, 0, sizeof(ev));
-		ev.type = MotionNotify;
-		ev.xmotion.root = root;
-		ev.xmotion.subwindow = child;
-		ev.xmotion.x_root = root_x;
-		ev.xmotion.y_root = root_y;
-		ev.xmotion.state = mask;
-		(void)x11dnd_source_process_event(&ev);
-	}
+	x11dnd_source_track_motion(sess, 0, 0, CurrentTime);
 
 	return False;
 }
@@ -109,12 +86,6 @@ static void
 xt_poll_timer_cb(XtPointer client_data, XtIntervalId *id)
 {
 	X11DndSourceSession *sess;
-	Display *dpy;
-	Window root, child;
-	int root_x, root_y, child_x, child_y;
-	unsigned int mask;
-	Bool query_ok;
-	XEvent ev;
 
 	(void)id;
 
@@ -122,24 +93,7 @@ xt_poll_timer_cb(XtPointer client_data, XtIntervalId *id)
 	if (sess == NULL)
 		return;
 
-	dpy = x11dnd_source_get_display(sess);
-	if (dpy == NULL)
-		return;
-
-	query_ok = XQueryPointer(dpy, DefaultRootWindow(dpy),
-		&root, &child, &root_x, &root_y,
-		&child_x, &child_y, &mask);
-
-	if (query_ok) {
-		memset(&ev, 0, sizeof(ev));
-		ev.type = MotionNotify;
-		ev.xmotion.root = root;
-		ev.xmotion.subwindow = child;
-		ev.xmotion.x_root = root_x;
-		ev.xmotion.y_root = root_y;
-		ev.xmotion.state = mask;
-		(void)x11dnd_source_process_event(&ev);
-	}
+	x11dnd_source_track_motion(sess, 0, 0, CurrentTime);
 
 	xt_poll_timer_id = XtAppAddTimeOut(
 		XtWidgetToApplicationContext(xt_shell),
@@ -337,12 +291,6 @@ x11dnd_xt_start_drag(Widget w, XButtonEvent *event, X11DndClass *callbacks)
 	xt_poll_timer_id = XtAppAddTimeOut(
 		XtWidgetToApplicationContext(w),
 		XT_DND_POLL_MS, xt_poll_timer_cb, (XtPointer)sess);
-
-	XtAddEventHandler(w,
-		PropertyChangeMask,
-		True, /* non-maskable: ClientMessage, SelectionRequest, etc. */
-		xt_event_handler,
-		NULL);
 
 	return sess;
 }

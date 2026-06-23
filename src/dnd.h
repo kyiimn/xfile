@@ -45,6 +45,9 @@ void dnd_start_drag(Widget w, XEvent *event);
 /* Returns True if an XDnD drag is currently in progress */
 Boolean dnd_drag_active(void);
 
+/* End the active drag: sends XdndDrop if over a target, cancels otherwise */
+void dnd_end_drag(void);
+
 /* X error handler for DnD operations */
 int dnd_xerror_handler(Display *dpy, XErrorEvent *ev);
 

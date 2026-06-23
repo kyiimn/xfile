@@ -29,6 +29,7 @@
 #include <Xm/AtomMgr.h>
 #include "x11dnd.h"
 #include "x11dnd_xt.h"
+#include "x11dnd_source.h"
 #include "dnd.h"
 
 #include "main.h"
@@ -1608,4 +1609,29 @@ Boolean
 dnd_drag_active(void)
 {
 	return dnd_source_session != NULL;
+}
+
+void
+dnd_end_drag(void)
+{
+	if (dnd_source_session == NULL) {
+		return;
+	}
+
+	if (dnd_source_session->current_target != None) {
+		/* Drop on a valid target: send XdndDrop and wait for
+		 * XdndFinished.  The on_drag_end callback will clean up
+		 * dnd_source_session once the target replies. */
+		x11dnd_source_send_drop(dnd_source_session,
+			dnd_source_session->current_target,
+			dnd_source_session->start_time);
+	} else {
+		/* No target under pointer: cancel the drag.
+		 * x11dnd_xt_cancel_drag() sends XdndLeave, releases the
+		 * selection, removes the Xt work proc and timer, and
+		 * calls the on_drag_end callback which clears
+		 * dnd_source_session.  Do NOT set dnd_source_session to
+		 * NULL here — the callback already does that. */
+		x11dnd_xt_cancel_drag();
+	}
 }

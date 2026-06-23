@@ -2362,7 +2362,10 @@ static void primary_button(Widget w, XEvent *evt,
 			fl->autoscrl_vec = 0;
 		}
 
-		if(fl->dragging) {
+		if(dnd_drag_active()) {
+			dnd_end_drag();
+			fl->dnd_state = DND_NONE;
+		} else if(fl->dragging) {
 			struct rectangle rc;
 			
 			/* we're in drag mode; erase rubber bands, if any */

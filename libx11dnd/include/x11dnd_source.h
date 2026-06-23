@@ -85,4 +85,7 @@ int x11dnd_source_handle_selection_request(XEvent *ev);
  */
 int x11dnd_source_handle_selection_clear(XEvent *ev);
 
+void x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
+	Time time);
+
 #endif /* X11DND_SOURCE_H */

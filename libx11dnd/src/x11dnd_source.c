@@ -947,6 +947,71 @@ x11dnd_source_process_event(XEvent *ev)
 	return 0;
 }
 
+void
+x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
+	Time time)
+{
+	const X11DndAtoms *atoms;
+	Window root_return, child, target, proxy;
+	int dest_x, dest_y;
+	unsigned int mask;
+	Window root;
+
+	if (sess == NULL) {
+		return;
+	}
+
+	if (sess->state == X11DND_SOURCE_DROP_SENT ||
+		sess->state == X11DND_SOURCE_FINISHED) {
+		return;
+	}
+
+	atoms = x11dnd_get_atoms();
+	if (atoms == NULL) {
+		return;
+	}
+
+	root = DefaultRootWindow(sess->dpy);
+
+	/* Find the deepest child window under the pointer */
+	child = None;
+	if (!XQueryPointer(sess->dpy, root,
+		&root_return, &child, &x, &y, &dest_x, &dest_y, &mask)) {
+		return;
+	}
+
+	/* Find the nearest XdndAware ancestor */
+	if (child != None) {
+		target = x11dnd_find_aware_ancestor(sess->dpy, child);
+	} else {
+		target = None;
+	}
+
+	/* Check for XdndProxy */
+	if (target != None) {
+		proxy = x11dnd_validate_proxy(sess->dpy, target);
+		if (proxy != None) {
+			target = proxy;
+		}
+	}
+
+	/* Target changed: send Leave to old, Enter to new */
+	if (target != sess->current_target) {
+		if (sess->current_target != None) {
+			x11dnd_source_send_leave(sess, sess->current_target);
+		}
+		if (target != None) {
+			x11dnd_source_send_enter(sess, target);
+		}
+	}
+
+	/* Send XdndPosition if we have a target and not waiting for status */
+	if (target != None && !sess->waiting_for_status) {
+		Atom action = sess->actions[0];
+		x11dnd_source_send_position(sess, target, x, y, time, action);
+	}
+}
+
 void *
 x11dnd_source_get_user_data(X11DndSourceSession *sess)
 {
