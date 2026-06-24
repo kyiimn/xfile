@@ -68,14 +68,20 @@ static X11DndSourceSession *dnd_source_session = NULL;
 static Widget dnd_source_widget = NULL;
 
 /* Drag icon window: override-redirect window that follows the pointer
- * during drag operations, showing color feedback (green=valid target,
- * red=invalid, black=neutral). */
+ * during drag operations, showing the copymove bitmap with color feedback
+ * (green border=valid target, red border=invalid, neutral=black). */
 static Window dnd_icon_win = None;
 static Display *dnd_icon_dpy = NULL;
-static int dnd_icon_accept = -1; /* -1=neutral, 0=reject, 1=accept */
+static Pixmap dnd_icon_pixmap = None;
+static Pixmap dnd_icon_mask = None;
+static int dnd_icon_accept = -1;
 static XtIntervalId dnd_icon_timer = 0;
-#define DND_ICON_SIZE 32
-#define DND_ICON_OFFSET 12	/* pixels from pointer hotspot */
+#define DND_ICON_WIDTH  48
+#define DND_ICON_HEIGHT 48
+#define DND_ICON_OFFSET 12
+
+#include "xbm/copymove.xbm"
+#include "xbm/copymove_m.xbm"
 
 /* libx11dnd callback table (static, lives for app lifetime) */
 static X11DndClass dnd_callbacks;
@@ -187,6 +193,33 @@ dnd_icon_track_cb(XtPointer client_data, XtIntervalId *id)
 		dnd_icon_track_cb, NULL);
 }
 
+static Pixmap
+dnd_create_icon_pixmap(Display *dpy, Window root, unsigned long fg,
+	unsigned long bg)
+{
+	Pixmap pm;
+
+	if(dnd_icon_pixmap != None) {
+		XFreePixmap(dpy, dnd_icon_pixmap);
+		dnd_icon_pixmap = None;
+	}
+	if(dnd_icon_mask != None) {
+		XFreePixmap(dpy, dnd_icon_mask);
+		dnd_icon_mask = None;
+	}
+
+	pm = XCreatePixmapFromBitmapData(dpy, root,
+		(char *)copymove_bits, copymove_width, copymove_height,
+		fg, bg, DefaultDepthOfScreen(DefaultScreenOfDisplay(dpy)));
+
+	dnd_icon_mask = XCreatePixmapFromBitmapData(dpy, root,
+		(char *)copymove_m_bits, copymove_m_width, copymove_m_height,
+		1, 0, 1);
+
+	dnd_icon_pixmap = pm;
+	return pm;
+}
+
 /* Called when a drag operation begins (after XdndEnter is sent) */
 static void
 dnd_on_drag_begin(X11DndSourceSession *sess)
@@ -196,6 +229,7 @@ dnd_on_drag_begin(X11DndSourceSession *sess)
 	Window root;
 	XSetWindowAttributes swa;
 	int screen;
+	Pixmap pm;
 
 	if(sess == NULL) return;
 
@@ -213,19 +247,23 @@ dnd_on_drag_begin(X11DndSourceSession *sess)
 	root = RootWindowOfScreen(XtScreen(shell));
 	screen = DefaultScreen(dpy);
 
+	pm = dnd_create_icon_pixmap(dpy, root,
+		WhitePixelOfScreen(XtScreen(shell)),
+		BlackPixelOfScreen(XtScreen(shell)));
+
 	swa.override_redirect = True;
-	swa.background_pixel = BlackPixelOfScreen(XtScreen(shell));
+	swa.background_pixmap = pm;
 	swa.border_pixel = WhitePixelOfScreen(XtScreen(shell));
 	swa.event_mask = ExposureMask;
 
 	dnd_icon_win = XCreateWindow(dpy, root,
 		-100, -100,
-		DND_ICON_SIZE, DND_ICON_SIZE,
+		DND_ICON_WIDTH, DND_ICON_HEIGHT,
 		2,
 		DefaultDepth(dpy, screen),
 		InputOutput,
 		DefaultVisual(dpy, screen),
-		CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWEventMask,
+		CWOverrideRedirect | CWBackPixmap | CWBorderPixel | CWEventMask,
 		&swa);
 
 	XMapWindow(dpy, dnd_icon_win);
@@ -263,6 +301,14 @@ dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 		XUnmapWindow(dnd_icon_dpy, dnd_icon_win);
 		XDestroyWindow(dnd_icon_dpy, dnd_icon_win);
 		dnd_icon_win = None;
+	}
+	if(dnd_icon_dpy != NULL && dnd_icon_pixmap != None) {
+		XFreePixmap(dnd_icon_dpy, dnd_icon_pixmap);
+		dnd_icon_pixmap = None;
+	}
+	if(dnd_icon_dpy != NULL && dnd_icon_mask != None) {
+		XFreePixmap(dnd_icon_dpy, dnd_icon_mask);
+		dnd_icon_mask = None;
 	}
 	dnd_icon_dpy = NULL;
 	dnd_icon_accept = -1;
@@ -422,7 +468,7 @@ dnd_status_received(X11DndSourceSession *sess, Bool accept,
 	int x, int y, int w, int h, Atom action)
 {
 	Display *dpy;
-	XColor bg;
+	unsigned long bg;
 	Screen *scr;
 
 	(void)x;
@@ -438,24 +484,33 @@ dnd_status_received(X11DndSourceSession *sess, Bool accept,
 
 	if(dnd_icon_win == None || dnd_icon_dpy == NULL) return;
 
+	scr = DefaultScreenOfDisplay(dpy);
+
 	if(accept) {
-		bg.red = 0;
-		bg.green = 0xFFFF;
-		bg.blue = 0;
+		XColor green;
+		green.red = 0;
+		green.green = 0xFFFF;
+		green.blue = 0;
+		green.flags = DoRed | DoGreen | DoBlue;
+		bg = BlackPixelOfScreen(scr);
+		if(XAllocColor(dpy, DefaultColormapOfScreen(scr), &green)) {
+			bg = green.pixel;
+		}
 		dnd_icon_accept = 1;
 	} else {
-		bg.red = 0xFFFF;
-		bg.green = 0;
-		bg.blue = 0;
+		XColor red;
+		red.red = 0xFFFF;
+		red.green = 0;
+		red.blue = 0;
+		red.flags = DoRed | DoGreen | DoBlue;
+		bg = BlackPixelOfScreen(scr);
+		if(XAllocColor(dpy, DefaultColormapOfScreen(scr), &red)) {
+			bg = red.pixel;
+		}
 		dnd_icon_accept = 0;
 	}
-	bg.flags = DoRed | DoGreen | DoBlue;
 
-	scr = DefaultScreenOfDisplay(dpy);
-	if(XAllocColor(dpy, DefaultColormapOfScreen(scr), &bg)) {
-		XSetWindowBackground(dnd_icon_dpy, dnd_icon_win, bg.pixel);
-		XFreeColors(dpy, DefaultColormapOfScreen(scr), &bg.pixel, 1, 0);
-	}
+	XSetWindowBackground(dnd_icon_dpy, dnd_icon_win, bg);
 	XClearWindow(dnd_icon_dpy, dnd_icon_win);
 	XRaiseWindow(dnd_icon_dpy, dnd_icon_win);
 }
@@ -1711,6 +1766,14 @@ dnd_destroy(void)
 	if(dnd_icon_dpy != NULL && dnd_icon_win != None) {
 		XDestroyWindow(dnd_icon_dpy, dnd_icon_win);
 		dnd_icon_win = None;
+	}
+	if(dnd_icon_dpy != NULL && dnd_icon_pixmap != None) {
+		XFreePixmap(dnd_icon_dpy, dnd_icon_pixmap);
+		dnd_icon_pixmap = None;
+	}
+	if(dnd_icon_dpy != NULL && dnd_icon_mask != None) {
+		XFreePixmap(dnd_icon_dpy, dnd_icon_mask);
+		dnd_icon_mask = None;
 	}
 	dnd_icon_dpy = NULL;
 
