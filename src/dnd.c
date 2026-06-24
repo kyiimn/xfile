@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 #include <stdint.h>
 #include <X11/Xatom.h>
+#include <X11/keysym.h>
 #include <X11/extensions/shape.h>
 #include <Xm/XmP.h>
 #include <Xm/DragDrop.h>
@@ -328,6 +329,12 @@ dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 	if(dnd_icon_timer != 0) {
 		XtRemoveTimeOut(dnd_icon_timer);
 		dnd_icon_timer = 0;
+	}
+
+	if(dnd_source_widget != NULL && XtIsRealized(dnd_source_widget)) {
+		XUngrabKey(XtDisplay(dnd_source_widget),
+			XKeysymToKeycode(XtDisplay(dnd_source_widget), XK_Escape),
+			AnyModifier, RootWindowOfScreen(XtScreen(dnd_source_widget)));
 	}
 
 	if(src_widget != NULL) {
@@ -1819,6 +1826,11 @@ dnd_start_drag(Widget w, XEvent *event)
 	/* Install BadAtom suppressor for Motif interop */
 	dnd_active = True;
 	dnd_prev_xerr = XSetErrorHandler(dnd_xerror_handler);
+
+	/* Grab Escape key globally so it works during the implicit pointer grab */
+	XGrabKey(XtDisplay(w), XKeysymToKeycode(XtDisplay(w), XK_Escape),
+		AnyModifier, RootWindowOfScreen(XtScreen(w)), False,
+		GrabModeAsync, GrabModeAsync);
 
 	/* Set dnd_source_widget BEFORE starting the drag, because the
 	 * on_drag_begin callback runs inside x11dnd_xt_start_drag and
