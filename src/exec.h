@@ -21,6 +21,10 @@ struct env_var_rec {
  * Any % prefixed words not found in vars will be looked up in X resources
  * APP_CLASS.ENV_RES_NAME. Any $ prefixed words will be expanded using getenv().
  *
+ * Braced syntax ${VAR} and %{VAR} is supported. Additionally, shell-style
+ * default values can be specified with ${VAR:-default} or %{VAR:-default}:
+ * if the variable is unset or empty, the default value after :- is used.
+ *
  * Returns zero on success, errno otherwise.
  */
 int expand_env_vars(const char *in, struct env_var_rec *vars, char **out);

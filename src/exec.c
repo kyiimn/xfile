@@ -82,6 +82,9 @@ int expand_env_vars(const char *in, struct env_var_rec *vars, char **out)
 			
 			/* explicit scope ${...} */
 			if(p[1] == '{') {
+				char *def_val = NULL;
+				char *delim;
+				
 				p[0] = '\0';
 				p += 2;
 				s = p;
@@ -103,10 +106,27 @@ int expand_env_vars(const char *in, struct env_var_rec *vars, char **out)
 				memcpy(buf, s, p - s);
 				buf[p - s] = '\0';
 				
+				/* check for ${VAR:-default} syntax */
+				delim = strstr(buf, ":-");
+				if(delim) {
+					*delim = '\0';
+					def_val = delim + 2;
+				}
+				
 				s--;
 				memmove(s, p + 1, strlen(p));
 				
 				p = s;
+				
+				if(vc == '$') {
+					const char *val = getenv(buf);
+					parts[nparts++] = (char*)((val && *val) ? val : def_val);
+				} else { /* was % */
+					const char *val = get_var_value(vars, buf);
+					parts[nparts++] = (char*)((val && *val) ? val : def_val);
+				}
+				free(buf);
+				buf = NULL;
 			} else { 
 				/* implicit scope $...
 				 * (eventually terminated by a space, dot, quote, or slash) */
@@ -133,14 +153,14 @@ int expand_env_vars(const char *in, struct env_var_rec *vars, char **out)
 				memmove(s , p, strlen(p) + 1);
 				
 				p = s;
+				
+				if(vc == '$') {
+					parts[nparts++] = getenv(buf);
+				} else { /* was % */
+					parts[nparts++] = get_var_value(vars, buf);
+				}
+				free(buf);
 			}
-			
-			if(vc == '$') {
-				parts[nparts++] = getenv(buf);
-			} else { /* was % */
-				parts[nparts++] = get_var_value(vars, buf);
-			}
-			free(buf);
 		}
 		p++;
 	}
