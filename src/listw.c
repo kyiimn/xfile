@@ -107,7 +107,6 @@ static void dir_up(Widget, XEvent*, String*, Cardinal*);
 static void delete(Widget, XEvent*, String*, Cardinal*);
 static Boolean item_at_xy_selected(Widget, int, int, unsigned int*);
 static void start_drag(Widget, XEvent*, String*, Cardinal*);
-static void cancel_drag(Widget, XEvent*, String*, Cardinal*);
 
 #define WARNING(w,s) XtAppWarning(XtWidgetToApplicationContext(w), s)
 
@@ -425,7 +424,6 @@ static char translations[] = {
 	"Shift<Btn5Down>: PageScroll(Down)\n"
 	"<Key>osfBackSpace: DirectoryUp()\n"
 	"<Key>osfDelete: Delete()\n"
-	"<Key>Escape: CancelDrag()\n"
 
 	"s ~m ~a <Key>Tab: PreviousTabGroup()\n"
 	"~m ~a <Key>Tab: NextTabGroup()\n"
@@ -452,7 +450,6 @@ static XtActionsRec actions[] = {
 	{ "ResetLookUp", reset_lookup },
 	{ "LookUpNext", lookup_next },
 	{ "StartDrag", start_drag },
-	{ "CancelDrag", cancel_drag },
 	{ "FocusIn", focus_in },
 	{ "FocusOut", focus_out },
 	{ "SecondaryButton", secondary_button },
@@ -2545,17 +2542,6 @@ static void start_drag(Widget w, XEvent *evt,
 	if(!fl->cur_sel.count) return;
 	
 	dnd_start_drag(w, evt);
-}
-
-static void cancel_drag(Widget w, XEvent *evt,
-	String *params, Cardinal *nparams)
-{
-	(void)w;
-	(void)evt;
-	(void)params;
-	(void)nparams;
-
-	dnd_cancel_drag();
 }
 
 static void secondary_button(Widget w, XEvent *evt,
