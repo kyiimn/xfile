@@ -67,6 +67,16 @@ static X11DndSourceSession *dnd_source_session = NULL;
 /* Source widget for the active drag (used in on_drag_end callback) */
 static Widget dnd_source_widget = NULL;
 
+/* Drag icon window: override-redirect window that follows the pointer
+ * during drag operations, showing color feedback (green=valid target,
+ * red=invalid, black=neutral). */
+static Window dnd_icon_win = None;
+static Display *dnd_icon_dpy = NULL;
+static int dnd_icon_accept = -1; /* -1=neutral, 0=reject, 1=accept */
+static XtIntervalId dnd_icon_timer = 0;
+#define DND_ICON_SIZE 32
+#define DND_ICON_OFFSET 12	/* pixels from pointer hotspot */
+
 /* libx11dnd callback table (static, lives for app lifetime) */
 static X11DndClass dnd_callbacks;
 
@@ -140,6 +150,7 @@ static Boolean dnd_move_confirm_wp(XtPointer client_data);
 static void dnd_perform_operation(const char *src_dir, char **names,
 	unsigned int count, const char *dest_dir, unsigned char operation);
 static void dnd_status_clear_cb(XtPointer client_data, XtIntervalId *id);
+static void dnd_icon_track_cb(XtPointer client_data, XtIntervalId *id);
 
 
 
@@ -147,12 +158,92 @@ static void dnd_status_clear_cb(XtPointer client_data, XtIntervalId *id);
  * libx11dnd callback implementations
  * ======================================================================== */
 
+/* Timer callback: polls pointer position and moves the drag icon window
+ * to follow the cursor during a drag operation. */
+static void
+dnd_icon_track_cb(XtPointer client_data, XtIntervalId *id)
+{
+	Window root;
+	Window junk_root, junk_child;
+	int root_x, root_y, junk_x, junk_y;
+	unsigned int junk_mask;
+
+	(void)client_data;
+	(void)id;
+
+	if(dnd_icon_win == None || dnd_icon_dpy == NULL) {
+		dnd_icon_timer = 0;
+		return;
+	}
+
+	root = DefaultRootWindow(dnd_icon_dpy);
+	XQueryPointer(dnd_icon_dpy, root, &junk_root, &junk_child,
+		&root_x, &root_y, &junk_x, &junk_y, &junk_mask);
+
+	XMoveWindow(dnd_icon_dpy, dnd_icon_win,
+		root_x + DND_ICON_OFFSET, root_y + DND_ICON_OFFSET);
+
+	dnd_icon_timer = XtAppAddTimeOut(app_inst.context, 16,
+		dnd_icon_track_cb, NULL);
+}
+
 /* Called when a drag operation begins (after XdndEnter is sent) */
 static void
 dnd_on_drag_begin(X11DndSourceSession *sess)
 {
-	(void)sess;
-	/* Nothing needed — we track state via dnd_source_session */
+	Display *dpy;
+	Widget shell;
+	Window root;
+	XSetWindowAttributes swa;
+	int screen;
+
+	if(sess == NULL) return;
+
+	dpy = x11dnd_source_get_display(sess);
+	if(dpy == NULL) return;
+
+	dnd_icon_dpy = dpy;
+	dnd_icon_accept = -1;
+
+	shell = dnd_source_widget;
+	while(shell != NULL && !XtIsShell(shell))
+		shell = XtParent(shell);
+	if(shell == NULL || !XtIsRealized(shell)) return;
+
+	root = RootWindowOfScreen(XtScreen(shell));
+	screen = DefaultScreen(dpy);
+
+	swa.override_redirect = True;
+	swa.background_pixel = BlackPixelOfScreen(XtScreen(shell));
+	swa.border_pixel = WhitePixelOfScreen(XtScreen(shell));
+	swa.event_mask = ExposureMask;
+
+	dnd_icon_win = XCreateWindow(dpy, root,
+		-100, -100,
+		DND_ICON_SIZE, DND_ICON_SIZE,
+		2,
+		DefaultDepth(dpy, screen),
+		InputOutput,
+		DefaultVisual(dpy, screen),
+		CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWEventMask,
+		&swa);
+
+	XMapWindow(dpy, dnd_icon_win);
+
+	{
+		Window junk_root, junk_child;
+		int root_x, root_y, junk_x, junk_y;
+		unsigned int junk_mask;
+		XQueryPointer(dpy, root, &junk_root, &junk_child,
+			&root_x, &root_y, &junk_x, &junk_y, &junk_mask);
+		XMoveWindow(dpy, dnd_icon_win,
+			root_x + DND_ICON_OFFSET, root_y + DND_ICON_OFFSET);
+	}
+
+	XRaiseWindow(dpy, dnd_icon_win);
+
+	dnd_icon_timer = XtAppAddTimeOut(app_inst.context, 16,
+		dnd_icon_track_cb, NULL);
 }
 
 /* Called when a drag operation ends (after XdndFinished or cancel) */
@@ -167,6 +258,19 @@ dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 	if(sess == NULL) return;
 
 	src_widget = dnd_source_widget;
+
+	if(dnd_icon_dpy != NULL && dnd_icon_win != None) {
+		XUnmapWindow(dnd_icon_dpy, dnd_icon_win);
+		XDestroyWindow(dnd_icon_dpy, dnd_icon_win);
+		dnd_icon_win = None;
+	}
+	dnd_icon_dpy = NULL;
+	dnd_icon_accept = -1;
+
+	if(dnd_icon_timer != 0) {
+		XtRemoveTimeOut(dnd_icon_timer);
+		dnd_icon_timer = 0;
+	}
 
 	if(src_widget != NULL) {
 		fl = FL_PART(src_widget);
@@ -317,14 +421,43 @@ static void
 dnd_status_received(X11DndSourceSession *sess, Bool accept,
 	int x, int y, int w, int h, Atom action)
 {
-	(void)sess;
-	(void)accept;
+	Display *dpy;
+	XColor bg;
+	Screen *scr;
+
 	(void)x;
 	(void)y;
 	(void)w;
 	(void)h;
 	(void)action;
-	/* Could update cursor/feedback here; currently a no-op */
+
+	if(sess == NULL) return;
+
+	dpy = x11dnd_source_get_display(sess);
+	if(dpy == NULL) return;
+
+	if(dnd_icon_win == None || dnd_icon_dpy == NULL) return;
+
+	if(accept) {
+		bg.red = 0;
+		bg.green = 0xFFFF;
+		bg.blue = 0;
+		dnd_icon_accept = 1;
+	} else {
+		bg.red = 0xFFFF;
+		bg.green = 0;
+		bg.blue = 0;
+		dnd_icon_accept = 0;
+	}
+	bg.flags = DoRed | DoGreen | DoBlue;
+
+	scr = DefaultScreenOfDisplay(dpy);
+	if(XAllocColor(dpy, DefaultColormapOfScreen(scr), &bg)) {
+		XSetWindowBackground(dnd_icon_dpy, dnd_icon_win, bg.pixel);
+		XFreeColors(dpy, DefaultColormapOfScreen(scr), &bg.pixel, 1, 0);
+	}
+	XClearWindow(dnd_icon_dpy, dnd_icon_win);
+	XRaiseWindow(dnd_icon_dpy, dnd_icon_win);
 }
 
 /* XdndFinished received from target (XDnD source) */
@@ -1573,8 +1706,19 @@ dnd_init(Widget wlist)
 void
 dnd_destroy(void)
 {
-	/* x11dnd_xt_destroy calls x11dnd_destroy internally */
 	x11dnd_xt_destroy();
+
+	if(dnd_icon_dpy != NULL && dnd_icon_win != None) {
+		XDestroyWindow(dnd_icon_dpy, dnd_icon_win);
+		dnd_icon_win = None;
+	}
+	dnd_icon_dpy = NULL;
+
+	if(dnd_icon_timer != 0) {
+		XtRemoveTimeOut(dnd_icon_timer);
+		dnd_icon_timer = 0;
+	}
+
 	wlist_ref = NULL;
 	dnd_source_session = NULL;
 }
