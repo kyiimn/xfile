@@ -68,9 +68,12 @@ static X11DndSourceSession *dnd_source_session = NULL;
 /* Source widget for the active drag (used in on_drag_end callback) */
 static Widget dnd_source_widget = NULL;
 
-/* Drag cursor state — single cursor with color changes (Motif approach) */
+/* Drag cursor state — single cursor with Motif-style color changes.
+ * Uses XChangeActivePointerGrab to change the cursor during the implicit
+ * grab that starts on ButtonPress. XRecolorCursor changes colors in-place.
+ * No explicit XGrabPointer/XDefineCursor needed — the implicit grab's
+ * cursor persists across all windows until ButtonRelease. */
 static Cursor dnd_drag_cursor = None;
-
 static Display *dnd_cursor_dpy = NULL;
 static XColor dnd_color_valid;      /* Green — valid drop site */
 static XColor dnd_color_invalid;    /* Red — invalid drop site */
@@ -245,13 +248,11 @@ dnd_destroy_cursors(Display *dpy)
 	}
 }
 
-/* Called when a drag operation begins (after XdndEnter is sent) */
 static void
 dnd_on_drag_begin(X11DndSourceSession *sess)
 {
 	Display *dpy;
 	Widget src_widget;
-	Widget shell;
 
 	if(sess == NULL) return;
 
@@ -265,28 +266,20 @@ dnd_on_drag_begin(X11DndSourceSession *sess)
 	}
 
 	XRecolorCursor(dpy, dnd_drag_cursor, &dnd_color_neutral_fg, &dnd_color_bg);
+	dnd_cursor_dpy = dpy;
 
-	/* Set the drag cursor on the source widget's shell window.
-	 * XDefineCursor doesn't grab the pointer — it just changes the
-	 * cursor shape when the pointer is over this window. This avoids
-	 * interfering with Xt's event dispatch. */
-	if(src_widget != NULL) {
-		shell = src_widget;
-		while(shell != NULL && !XtIsShell(shell))
-			shell = XtParent(shell);
-		if(shell != NULL && XtIsRealized(shell)) {
-			XDefineCursor(dpy, XtWindow(shell), dnd_drag_cursor);
-			dnd_cursor_dpy = dpy;
-		}
-	}
+	/* Change the cursor of the active implicit grab (started by
+	 * ButtonPress) to the fleur drag cursor. XChangeActivePointerGrab
+	 * only changes the cursor — it does not create a new grab, so
+	 * Xt's event dispatch is undisturbed. The implicit grab's cursor
+	 * persists across all windows until ButtonRelease. */
+	XChangeActivePointerGrab(dpy, 0, dnd_drag_cursor, CurrentTime);
 }
 
-/* Called when a drag operation ends (after XdndFinished or cancel) */
 static void
 dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 {
 	Widget src_widget;
-	Widget shell;
 	struct file_list_part *fl;
 
 	(void)completed;
@@ -295,17 +288,10 @@ dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 
 	src_widget = dnd_source_widget;
 
-	if(dnd_cursor_dpy != NULL && dnd_drag_cursor != None) {
-		XRecolorCursor(dnd_cursor_dpy, dnd_drag_cursor,
-			&dnd_color_neutral_fg, &dnd_color_bg);
-
-		shell = src_widget;
-		while(shell != NULL && !XtIsShell(shell))
-			shell = XtParent(shell);
-		if(shell != NULL && XtIsRealized(shell)) {
-			XUndefineCursor(dnd_cursor_dpy, XtWindow(shell));
-		}
-	}
+	/* No cursor cleanup needed here. The implicit grab from ButtonPress
+	 * is released automatically on ButtonRelease, which restores the
+	 * default cursor. XChangeActivePointerGrab in dnd_on_drag_begin
+	 * only changed the grab's cursor — it did not create a new grab. */
 
 	if(src_widget != NULL) {
 		fl = FL_PART(src_widget);
