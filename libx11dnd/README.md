@@ -73,7 +73,7 @@ libx11dnd is built as a static archive. To use it in your project, copy or insta
 - `libx11dnd.a` to your library directory
 - `include/x11dnd.h` (and optionally `include/x11dnd_xt.h`) to your include directory
 
-Link with `-lX11` (and `-lXt` if you use the Xt wrapper).
+Link with `-lX11` (and `-lXt` if you use the Xt wrapper, and `-lXext` if you use shaped drag icons).
 
 There is no install target in the library Makefile. The XFile top-level `make install` installs the whole application, including libx11dnd if it is part of the build.
 
@@ -99,6 +99,30 @@ The public API is declared in `include/x11dnd.h`. The Xt wrapper is declared in 
 | `void x11dnd_cancel_drag(X11DndSourceSession *sess)` | Cancel the drag, send `XdndLeave` to the current target, and destroy the session. |
 | `void x11dnd_end_drag(X11DndSourceSession *sess)` | End the drag after `XdndFinished` has been received. |
 | `int x11dnd_source_process_event(XEvent *ev)` | Dispatch an X event to the active source session. Returns 1 if consumed. |
+
+
+### Drag Icon Management
+
+libx11dnd provides optional visual drag feedback through a drag icon window that the library creates, moves, and destroys automatically. The application describes the icon with an `X11DndDragIcon` structure and passes it to `x11dnd_xt_set_drag_icon()` before starting a drag.
+
+The `X11DndDragIcon` fields are:
+
+| Field | Description |
+|-------|-------------|
+| `bits` | XBM foreground bitmap data |
+| `mask_bits` | XBM mask bitmap data. `NULL` produces a rectangular icon window with no shape mask. |
+| `width`, `height` | Icon dimensions in pixels |
+| `hotspot_x`, `hotspot_y` | Offset from the pointer position. For example, `12,12` places the icon 12 pixels right and 12 pixels down from the pointer. |
+| `fg_pixel` | Foreground pixel value, e.g., `BlackPixelOfScreen(...)` |
+| `bg_pixel` | Background pixel value, e.g., `WhitePixelOfScreen(...)` |
+| `flags` | Bitwise OR of `X11DND_ICON_CANCEL_ESC` and `X11DND_ICON_SHAPE_MASK` |
+
+Icon flags:
+
+| Flag | Value | Meaning |
+|------|-------|---------|
+| `X11DND_ICON_CANCEL_ESC` | `0x01` | Enables ESC key cancel during the drag. The library polls the keyboard via `XQueryKeymap()` in its timer callback; when Escape is pressed it calls `x11dnd_xt_cancel_drag()` internally. |
+| `X11DND_ICON_SHAPE_MASK` | `0x02` | Applies `mask_bits` as an XShape bounding mask for a transparent icon background. If this flag is not set, or `mask_bits` is `NULL`, the icon window is rectangular and the background pixmap is visible. |
 
 
 ### Drop target functions
@@ -146,7 +170,24 @@ The public API is declared in `include/x11dnd.h`. The Xt wrapper is declared in 
 | `void x11dnd_xt_unregister_target(Widget w)` | Unregister the shell ancestor of a widget. |
 | `X11DndSourceSession *x11dnd_xt_start_drag(Widget w, XButtonEvent *event, X11DndClass *callbacks)` | Begin a drag from an Xt widget and install a work proc for tracking. |
 | `void x11dnd_xt_cancel_drag(void)` | Cancel the active drag started with `x11dnd_xt_start_drag()`. |
+| `void x11dnd_xt_set_drag_icon(const X11DndDragIcon *icon)` | Set the drag icon configuration. Must be called **before** `x11dnd_xt_start_drag()`. Pass `NULL` to disable the icon. ⚠️ The `icon` struct must remain valid for the application's lifetime (use `static` or global storage). |
+| `void x11dnd_xt_set_poll_interval(unsigned int ms)` | Set the pointer tracking poll interval in milliseconds. Default is 16 ms. Lower values give smoother icon tracking but use more CPU. Must be called before starting a drag. Values are clamped to 1–1000 ms. |
 | `int x11dnd_xt_process_event(Widget w, XEvent *ev)` | Feed an event into libx11dnd from an Xt event loop. |
+
+
+### ⚠️ Important Caveats
+
+1. **Static lifetime requirement** — The `X11DndDragIcon` struct passed to `x11dnd_xt_set_drag_icon()` must have static or global lifetime. The library stores only the pointer, not a copy. **Do NOT pass a stack-allocated struct.**
+
+2. **XShape extension** — When using `X11DND_ICON_SHAPE_MASK`, the application must link against `-lXext`. The library itself includes `<X11/extensions/shape.h>` and calls `XShapeCombineMask()`.
+
+3. **Icon lifecycle** — The library creates the icon window at drag start (`x11dnd_xt_start_drag()`), moves it during the drag, and destroys it at drag end or cancel. The application must **NOT** create, move, or destroy the icon window manually. The `on_drag_begin` and `on_drag_end` callbacks are still called, but icon management is handled internally.
+
+4. **ESC cancel** — When `X11DND_ICON_CANCEL_ESC` is set, the library polls the keyboard via `XQueryKeymap()` every poll interval (default 16 ms). This works even during Motif's implicit pointer grab, where `XGrabKey` and Xt translations would fail. The cancel triggers `x11dnd_xt_cancel_drag()`, which calls the `on_drag_end(sess, False)` callback.
+
+5. **Poll interval tradeoff** — The default 16 ms poll interval provides smooth icon tracking. Increasing it (e.g., to 50 ms) reduces CPU usage but makes the icon feel laggy. Values below 8 ms are not recommended because they may starve the Xt event loop.
+
+6. **Thread safety** — The library is **NOT thread-safe**. All functions must be called from the Xt main thread.
 
 
 ### Callback reference (`X11DndClass`)
@@ -155,8 +196,8 @@ The public API is declared in `include/x11dnd.h`. The Xt wrapper is declared in 
 
 | Slot | Signature | Description |
 |------|-----------|-------------|
-| `on_drag_begin` | `void (*)(X11DndSourceSession *sess)` | Called when a drag begins (after `XdndEnter` is sent). |
-| `on_drag_end` | `void (*)(X11DndSourceSession *sess, Bool completed)` | Called when a drag ends (after `XdndFinished` or cancel). |
+| `on_drag_begin` | `void (*)(X11DndSourceSession *sess)` | Called when a drag begins. If a drag icon is configured, the library has already created the icon window at this point. |
+| `on_drag_end` | `void (*)(X11DndSourceSession *sess, Bool completed)` | Called when a drag ends. The library destroys the icon window before calling this callback. Do **NOT** attempt to manage the icon window in this callback. |
 | `get_drag_data` | `x11dnd_drag_data_cb` | Source callback: allocate and return data for a `SelectionRequest`. |
 | `status_received` | `x11dnd_status_cb` | Source callback: `XdndStatus` received from the target. |
 | `finished_received` | `x11dnd_finished_cb` | Source callback: `XdndFinished` received from the target. |
@@ -184,6 +225,8 @@ The public API is declared in `include/x11dnd.h`. The Xt wrapper is declared in 
 
 - `X11DND_VERSION_5` (5) — maximum protocol version implemented
 - `X11DND_VERSION_MIN` (3) — minimum supported protocol version
+- `X11DND_ICON_CANCEL_ESC` (`0x01`) — enable ESC key cancel during drag
+- `X11DND_ICON_SHAPE_MASK` (`0x02`) — apply XShape mask for transparent icon background
 
 ### MIME type strings
 
@@ -233,14 +276,19 @@ libx11dnd targets the freedesktop.org XDnD version 5 specification. The followin
 
 ## Xt Integration Example
 
-This example shows a typical Xt/Motif program using the Xt wrapper.
+This example shows a typical Xt/Motif program using the Xt wrapper, including drag icon setup.
 
 ```c
 #include <Xm/Xm.h>
 #include <Xm/Form.h>
 #include "x11dnd_xt.h"
 
+/* XBM data for the drag icon (example: 48x48 copy/move icon) */
+#include "my_icon.xbm"    /* defines my_icon_bits, my_icon_width, etc. */
+#include "my_icon_m.xbm"  /* defines my_icon_m_bits, etc. */
+
 static X11DndClass dnd_class;
+static X11DndDragIcon drag_icon;  /* ⚠️ Must be static/global! */
 
 static void on_drop_received(X11DndTargetSession *sess, Atom target,
                              unsigned char *data, unsigned long length,
@@ -272,6 +320,7 @@ int main(int argc, char **argv)
 {
     XtAppContext app;
     Widget shell, form;
+    Display *dpy;
 
     shell = XtVaOpenApplication(&app, "Demo", NULL, 0,
                                &argc, argv, NULL,
@@ -281,21 +330,36 @@ int main(int argc, char **argv)
     XtManageChild(form);
     XtRealizeWidget(shell);
 
-    /* 1. Initialize libx11dnd for this display. */
+    dpy = XtDisplay(shell);
+
+    /* 1. Initialize libx11dnd */
     x11dnd_xt_init(shell);
 
-    /* 2. Register the shell window as a drop target. */
+    /* 2. Configure the drag icon */
+    drag_icon.bits       = my_icon_bits;
+    drag_icon.mask_bits  = my_icon_m_bits;   /* NULL for rectangular window */
+    drag_icon.width      = my_icon_width;
+    drag_icon.height     = my_icon_height;
+    drag_icon.hotspot_x  = 12;               /* Offset from pointer */
+    drag_icon.hotspot_y  = 12;
+    drag_icon.fg_pixel   = BlackPixelOfScreen(XtScreen(shell));
+    drag_icon.bg_pixel   = WhitePixelOfScreen(XtScreen(shell));
+    drag_icon.flags      = X11DND_ICON_CANCEL_ESC | X11DND_ICON_SHAPE_MASK;
+
+    x11dnd_xt_set_drag_icon(&drag_icon);
+    x11dnd_xt_set_poll_interval(16);  /* 16ms for smooth tracking */
+
+    /* 3. Register drop target */
     dnd_class.position_received = on_position;
     dnd_class.drop_received     = on_drop_received;
     x11dnd_xt_register_target(form, &dnd_class);
 
-    /* 3. Run the application; the Xt handler feeds events automatically. */
+    /* 4. Run */
     XtAppMainLoop(app);
 
-    /* 4. Cleanup before exit. */
+    /* 5. Cleanup */
     x11dnd_xt_unregister_target(form);
     x11dnd_xt_destroy();
-
     return 0;
 }
 ```
