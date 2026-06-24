@@ -1054,10 +1054,16 @@ dnd_update_highlight(Widget w, Position x, Position y)
 	struct file_list_part *fl = FL_PART(w);
 	unsigned int index;
 
-	dnd_clear_highlight(w);
+	if(!item_at_xy(w, x, y, &index) || !S_ISDIR(fl->items[index].mode)) {
+		dnd_clear_highlight(w);
+		return;
+	}
 
-	if(!item_at_xy(w, x, y, &index)) return;
-	if(!S_ISDIR(fl->items[index].mode)) return;
+	/* Same item — skip redraw to avoid XOR flicker */
+	if(fl->dnd_highlight_active && fl->dnd_highlight_item == index)
+		return;
+
+	dnd_clear_highlight(w);
 
 	fl->dnd_highlight_item = index;
 	fl->dnd_highlight_active = True;
