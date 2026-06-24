@@ -68,10 +68,6 @@ static X11DndSourceSession *dnd_source_session = NULL;
 /* Source widget for the active drag (used in on_drag_end callback) */
 static Widget dnd_source_widget = NULL;
 
-/* Drag cursor state. Only XDefineCursor/XUndefineCursor on the shell
- * window are used — no grabs, no XChangeActivePointerGrab. This avoids
- * interfering with Xt's event dispatch (ButtonRelease must reach the
- * file list widget's translation table for dnd_end_drag to fire). */
 static Cursor dnd_drag_cursor = None;
 static Display *dnd_cursor_dpy = NULL;
 static XColor dnd_color_valid;
@@ -267,6 +263,12 @@ dnd_on_drag_begin(X11DndSourceSession *sess)
 	XRecolorCursor(dpy, dnd_drag_cursor, &dnd_color_neutral_fg, &dnd_color_bg);
 	dnd_cursor_dpy = dpy;
 
+	XChangeActivePointerGrab(dpy,
+		ButtonPressMask | ButtonReleaseMask
+		| PointerMotionMask | ButtonMotionMask
+		| EnterWindowMask | LeaveWindowMask,
+		dnd_drag_cursor, CurrentTime);
+
 	if(src_widget != NULL) {
 		shell = src_widget;
 		while(shell != NULL && !XtIsShell(shell))
@@ -290,6 +292,12 @@ dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 	src_widget = dnd_source_widget;
 
 	if(dnd_cursor_dpy != NULL && dnd_drag_cursor != None) {
+		XChangeActivePointerGrab(dnd_cursor_dpy,
+			ButtonPressMask | ButtonReleaseMask
+			| PointerMotionMask | ButtonMotionMask
+			| EnterWindowMask | LeaveWindowMask,
+			None, CurrentTime);
+
 		shell = src_widget;
 		while(shell != NULL && !XtIsShell(shell))
 			shell = XtParent(shell);
@@ -463,6 +471,11 @@ dnd_status_received(X11DndSourceSession *sess, Bool accept,
 	} else {
 		XRecolorCursor(dpy, dnd_drag_cursor, &dnd_color_invalid, &dnd_color_bg);
 	}
+	XChangeActivePointerGrab(dpy,
+		ButtonPressMask | ButtonReleaseMask
+		| PointerMotionMask | ButtonMotionMask
+		| EnterWindowMask | LeaveWindowMask,
+		dnd_drag_cursor, CurrentTime);
 }
 
 /* XdndFinished received from target (XDnD source) */
