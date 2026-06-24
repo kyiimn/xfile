@@ -480,9 +480,6 @@ dnd_status_received(X11DndSourceSession *sess, Bool accept,
 	int x, int y, int w, int h, Atom action)
 {
 	Display *dpy;
-	Window root;
-	unsigned long fg, bg;
-	Screen *scr;
 
 	(void)x;
 	(void)y;
@@ -497,41 +494,7 @@ dnd_status_received(X11DndSourceSession *sess, Bool accept,
 
 	if(dnd_icon_win == None || dnd_icon_dpy == NULL) return;
 
-	scr = DefaultScreenOfDisplay(dpy);
-	root = DefaultRootWindow(dnd_icon_dpy);
-
-	if(accept) {
-		fg = BlackPixelOfScreen(scr);
-		{
-			XColor green;
-			green.red = 0;
-			green.green = 0xFFFF;
-			green.blue = 0;
-			green.flags = DoRed | DoGreen | DoBlue;
-			bg = BlackPixelOfScreen(scr);
-			if(XAllocColor(dpy, DefaultColormapOfScreen(scr), &green)) {
-				fg = green.pixel;
-			}
-		}
-		dnd_icon_accept = 1;
-	} else {
-		XColor red;
-		red.red = 0xFFFF;
-		red.green = 0;
-		red.blue = 0;
-		red.flags = DoRed | DoGreen | DoBlue;
-		bg = BlackPixelOfScreen(scr);
-		fg = BlackPixelOfScreen(scr);
-		if(XAllocColor(dpy, DefaultColormapOfScreen(scr), &red)) {
-			fg = red.pixel;
-		}
-		dnd_icon_accept = 0;
-	}
-
-	dnd_recolor_icon(dpy, root, fg, bg);
-	XSetWindowBackgroundPixmap(dnd_icon_dpy, dnd_icon_win, dnd_icon_pixmap);
-	XClearWindow(dnd_icon_dpy, dnd_icon_win);
-	XRaiseWindow(dnd_icon_dpy, dnd_icon_win);
+	dnd_icon_accept = accept ? 1 : 0;
 }
 
 /* XdndFinished received from target (XDnD source) */
