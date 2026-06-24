@@ -70,6 +70,7 @@ static Widget dnd_source_widget = NULL;
 
 static Cursor dnd_drag_cursor = None;
 static Display *dnd_cursor_dpy = NULL;
+static Window dnd_grab_window = None;
 static XColor dnd_color_valid;
 static XColor dnd_color_invalid;
 static XColor dnd_color_neutral_fg;
@@ -248,6 +249,8 @@ dnd_on_drag_begin(X11DndSourceSession *sess)
 {
 	Display *dpy;
 	Widget src_widget, shell;
+	Window grab_win;
+	int grab_result;
 
 	if(sess == NULL) return;
 
@@ -263,19 +266,25 @@ dnd_on_drag_begin(X11DndSourceSession *sess)
 	XRecolorCursor(dpy, dnd_drag_cursor, &dnd_color_neutral_fg, &dnd_color_bg);
 	dnd_cursor_dpy = dpy;
 
-	XChangeActivePointerGrab(dpy,
+	shell = src_widget;
+	while(shell != NULL && !XtIsShell(shell))
+		shell = XtParent(shell);
+	if(shell == NULL || !XtIsRealized(shell)) return;
+
+	grab_win = XtWindow(shell);
+
+	grab_result = XGrabPointer(dpy, grab_win, True,
 		ButtonPressMask | ButtonReleaseMask
 		| PointerMotionMask | ButtonMotionMask
 		| EnterWindowMask | LeaveWindowMask,
-		dnd_drag_cursor, CurrentTime);
+		GrabModeAsync, GrabModeAsync,
+		None, dnd_drag_cursor, CurrentTime);
 
-	if(src_widget != NULL) {
-		shell = src_widget;
-		while(shell != NULL && !XtIsShell(shell))
-			shell = XtParent(shell);
-		if(shell != NULL && XtIsRealized(shell)) {
-			XDefineCursor(dpy, XtWindow(shell), dnd_drag_cursor);
-		}
+	if(grab_result == GrabSuccess) {
+		dnd_grab_window = grab_win;
+	} else {
+		XDefineCursor(dpy, grab_win, dnd_drag_cursor);
+		dnd_grab_window = None;
 	}
 }
 
@@ -291,18 +300,17 @@ dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 
 	src_widget = dnd_source_widget;
 
-	if(dnd_cursor_dpy != NULL && dnd_drag_cursor != None) {
-		XChangeActivePointerGrab(dnd_cursor_dpy,
-			ButtonPressMask | ButtonReleaseMask
-			| PointerMotionMask | ButtonMotionMask
-			| EnterWindowMask | LeaveWindowMask,
-			None, CurrentTime);
-
-		shell = src_widget;
-		while(shell != NULL && !XtIsShell(shell))
-			shell = XtParent(shell);
-		if(shell != NULL && XtIsRealized(shell)) {
-			XUndefineCursor(dnd_cursor_dpy, XtWindow(shell));
+	if(dnd_cursor_dpy != NULL) {
+		if(dnd_grab_window != None) {
+			XUngrabPointer(dnd_cursor_dpy, CurrentTime);
+			dnd_grab_window = None;
+		} else {
+			shell = src_widget;
+			while(shell != NULL && !XtIsShell(shell))
+				shell = XtParent(shell);
+			if(shell != NULL && XtIsRealized(shell)) {
+				XUndefineCursor(dnd_cursor_dpy, XtWindow(shell));
+			}
 		}
 	}
 
@@ -471,11 +479,14 @@ dnd_status_received(X11DndSourceSession *sess, Bool accept,
 	} else {
 		XRecolorCursor(dpy, dnd_drag_cursor, &dnd_color_invalid, &dnd_color_bg);
 	}
-	XChangeActivePointerGrab(dpy,
-		ButtonPressMask | ButtonReleaseMask
-		| PointerMotionMask | ButtonMotionMask
-		| EnterWindowMask | LeaveWindowMask,
-		dnd_drag_cursor, CurrentTime);
+
+	if(dnd_grab_window != None) {
+		XChangeActivePointerGrab(dpy,
+			ButtonPressMask | ButtonReleaseMask
+			| PointerMotionMask | ButtonMotionMask
+			| EnterWindowMask | LeaveWindowMask,
+			dnd_drag_cursor, CurrentTime);
+	}
 }
 
 /* XdndFinished received from target (XDnD source) */
@@ -1728,6 +1739,10 @@ dnd_destroy(void)
 	x11dnd_xt_destroy();
 
 	if(dnd_cursor_dpy != NULL) {
+		if(dnd_grab_window != None) {
+			XUngrabPointer(dnd_cursor_dpy, CurrentTime);
+			dnd_grab_window = None;
+		}
 		dnd_destroy_cursors(dnd_cursor_dpy);
 		dnd_cursor_dpy = NULL;
 	}
