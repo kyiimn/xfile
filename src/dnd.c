@@ -348,9 +348,9 @@ dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 
 	if(dnd_esc_shell != NULL) {
 		Display *dpy = XtDisplay(dnd_esc_shell);
-		Window root = RootWindowOfScreen(XtScreen(dnd_esc_shell));
-		XUngrabKey(dpy, XKeysymToKeycode(dpy, XK_Escape),
-			AnyModifier, root);
+		KeyCode esc = XKeysymToKeycode(dpy, XK_Escape);
+		Window win = XtWindow(dnd_esc_shell);
+		XUngrabKey(dpy, esc, AnyModifier, win);
 		XtRemoveEventHandler(dnd_esc_shell, KeyPressMask, False,
 			dnd_esc_handler, NULL);
 		dnd_esc_shell = NULL;
@@ -1846,16 +1846,18 @@ dnd_start_drag(Widget w, XEvent *event)
 	dnd_active = True;
 	dnd_prev_xerr = XSetErrorHandler(dnd_xerror_handler);
 
-	/* Grab Escape key globally so it works during the implicit pointer grab */
+	/* Grab Escape key so it works during the implicit pointer grab.
+	 * XGrabKey on the shell window ensures the key event is delivered
+	 * there regardless of pointer grab state. */
 	{
 		Widget shell = w;
 		while(shell != NULL && !XtIsShell(shell))
 			shell = XtParent(shell);
-		if(shell != NULL) {
+		if(shell != NULL && XtIsRealized(shell)) {
 			Display *dpy = XtDisplay(shell);
-			Window root = RootWindowOfScreen(XtScreen(shell));
-			XGrabKey(dpy, XKeysymToKeycode(dpy, XK_Escape),
-				AnyModifier, root, False,
+			KeyCode esc = XKeysymToKeycode(dpy, XK_Escape);
+			Window win = XtWindow(shell);
+			XGrabKey(dpy, esc, AnyModifier, win, False,
 				GrabModeAsync, GrabModeAsync);
 			XtAddEventHandler(shell, KeyPressMask, False,
 				dnd_esc_handler, NULL);
