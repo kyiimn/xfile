@@ -253,6 +253,7 @@ dnd_on_drag_begin(X11DndSourceSession *sess)
 {
 	Display *dpy;
 	Widget src_widget;
+	Widget shell;
 
 	if(sess == NULL) return;
 
@@ -268,18 +269,33 @@ dnd_on_drag_begin(X11DndSourceSession *sess)
 	XRecolorCursor(dpy, dnd_drag_cursor, &dnd_color_neutral_fg, &dnd_color_bg);
 	dnd_cursor_dpy = dpy;
 
-	/* Change the cursor of the active implicit grab (started by
-	 * ButtonPress) to the fleur drag cursor. XChangeActivePointerGrab
-	 * only changes the cursor — it does not create a new grab, so
-	 * Xt's event dispatch is undisturbed. The implicit grab's cursor
-	 * persists across all windows until ButtonRelease. */
+	/* Two-pronged approach for reliable cursor visibility:
+	 * 1. XChangeActivePointerGrab changes the cursor of the implicit
+	 *    grab (started by ButtonPress). This makes the fleur cursor
+	 *    visible when the pointer is over OTHER windows.
+	 * 2. XDefineCursor on the shell window sets the window cursor so
+	 *    that the fleur is visible when the pointer is over our window
+	 *    (some X servers show the window cursor rather than the grab
+	 *    cursor when owner_events is True for the implicit grab).
+	 * Neither call creates a new grab, so Xt event dispatch is safe. */
 	XChangeActivePointerGrab(dpy, 0, dnd_drag_cursor, CurrentTime);
+
+	if(src_widget != NULL) {
+		shell = src_widget;
+		while(shell != NULL && !XtIsShell(shell))
+			shell = XtParent(shell);
+		if(shell != NULL && XtIsRealized(shell)) {
+			XDefineCursor(dpy, XtWindow(shell), dnd_drag_cursor);
+		}
+	}
+	XFlush(dpy);
 }
 
 static void
 dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 {
 	Widget src_widget;
+	Widget shell;
 	struct file_list_part *fl;
 
 	(void)completed;
@@ -288,10 +304,19 @@ dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 
 	src_widget = dnd_source_widget;
 
-	/* No cursor cleanup needed here. The implicit grab from ButtonPress
-	 * is released automatically on ButtonRelease, which restores the
-	 * default cursor. XChangeActivePointerGrab in dnd_on_drag_begin
-	 * only changed the grab's cursor — it did not create a new grab. */
+	/* Restore the default cursor on the shell window.
+	 * XDefineCursor in dnd_on_drag_begin set the fleur cursor;
+	 * XUndefineCursor restores the window default. The implicit
+	 * grab from ButtonPress releases automatically on ButtonRelease,
+	 * which also restores the grab cursor to the window default. */
+	if(dnd_cursor_dpy != NULL && dnd_drag_cursor != None) {
+		shell = src_widget;
+		while(shell != NULL && !XtIsShell(shell))
+			shell = XtParent(shell);
+		if(shell != NULL && XtIsRealized(shell)) {
+			XUndefineCursor(dnd_cursor_dpy, XtWindow(shell));
+		}
+	}
 
 	if(src_widget != NULL) {
 		fl = FL_PART(src_widget);
