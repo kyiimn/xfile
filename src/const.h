@@ -30,7 +30,7 @@
 #define XFILE_OPEN "xfile-open"
 
 /* Default update polling interval */
-#define DEF_REFRESH_INT 4
+#define DEF_REFRESH_INT 1
 
 /* Default history limit */
 #define DEF_HISTORY_MAX 8
