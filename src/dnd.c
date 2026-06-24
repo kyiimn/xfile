@@ -1764,11 +1764,17 @@ dnd_start_drag(Widget w, XEvent *event)
 	dnd_active = True;
 	dnd_prev_xerr = XSetErrorHandler(dnd_xerror_handler);
 
+	/* Set dnd_source_widget BEFORE starting the drag, because the
+	 * on_drag_begin callback runs inside x11dnd_xt_start_drag and
+	 * needs dnd_source_widget to find the shell for the icon window. */
+	dnd_source_widget = w;
+
 	/* Start the XDnD drag via libx11dnd */
 	bev = &event->xbutton;
 	sess = x11dnd_xt_start_drag(w, bev, &dnd_callbacks);
 	if(sess == NULL) {
 		dnd_active = False;
+		dnd_source_widget = NULL;
 		if(dnd_prev_xerr != NULL) {
 			XSetErrorHandler(dnd_prev_xerr);
 			dnd_prev_xerr = NULL;
@@ -1777,7 +1783,6 @@ dnd_start_drag(Widget w, XEvent *event)
 	}
 
 	dnd_source_session = sess;
-	dnd_source_widget = w;
 	fl->dnd_state = DND_DRAG;
 }
 
