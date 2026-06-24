@@ -606,23 +606,16 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 	switch (ev->type) {
 	case ClientMessage:
 	{
-		/* XdndFinished and SelectionClear free the source session
-		 * via on_drag_end/cancel callbacks. We must save the icon
-		 * window info BEFORE dispatching the event, because after
-		 * dispatch xt_active_source is a dangling pointer. */
-		Window icon_win = None;
-		Display *icon_dpy = NULL;
-		Pixmap icon_pixmap = None;
-		Pixmap icon_mask_px = None;
-		Bool had_icon = False;
-
-		if (xt_active_source != NULL
-			&& xt_active_source->icon_win != None) {
-			icon_win = xt_active_source->icon_win;
-			icon_dpy = x11dnd_source_get_display(xt_active_source);
-			icon_pixmap = xt_active_source->icon_pixmap;
-			icon_mask_px = xt_active_source->icon_mask;
-			had_icon = True;
+		/* XdndFinished frees the source session via on_drag_end
+		 * callback inside x11dnd_source_process_event. After that
+		 * call returns, xt_active_source is a dangling pointer.
+		 * Destroy the icon BEFORE dispatching so the session
+		 * is still valid. */
+		if (xt_active_source != NULL && atoms != NULL
+			&& ev->xclient.message_type == atoms->XdndFinished) {
+			if (xt_active_source->icon_win != None) {
+				xt_destroy_icon_window(xt_active_source);
+			}
 		}
 
 		consumed = x11dnd_target_process_event(ev);
@@ -646,20 +639,13 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 			}
 		}
 
-	/* XdndFinished frees the source session, leaving
-	 * xt_active_source dangling. Detect this so we
-	 * can clean up the Xt work proc and timer. */
-		if (consumed && xt_active_source == NULL
+		/* XdndFinished frees the source session, leaving
+		 * xt_active_source dangling. Remove the Xt work proc
+		 * and timer, and clear xt_active_source. */
+		if (consumed && xt_active_source != NULL
 			&& atoms != NULL
 			&& ev->xclient.message_type
 				== atoms->XdndFinished) {
-			if (had_icon && icon_dpy != NULL) {
-				XUnmapWindow(icon_dpy, icon_win);
-				XDestroyWindow(icon_dpy, icon_win);
-				XFreePixmap(icon_dpy, icon_pixmap);
-				if (icon_mask_px != None)
-					XFreePixmap(icon_dpy, icon_mask_px);
-			}
 			source_session_ended = True;
 		}
 	}
@@ -667,37 +653,20 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 
 	case SelectionRequest:
 	case SelectionClear:
-	{
-		Window icon_win = None;
-		Display *icon_dpy = NULL;
-		Pixmap icon_pixmap = None;
-		Pixmap icon_mask_px = None;
-		Bool had_icon = False;
-
+		/* SelectionClear frees the source session via cancel_drag's
+		 * on_drag_end callback. Destroy icon before dispatching. */
 		if (xt_active_source != NULL
-			&& xt_active_source->icon_win != None) {
-			icon_win = xt_active_source->icon_win;
-			icon_dpy = x11dnd_source_get_display(xt_active_source);
-			icon_pixmap = xt_active_source->icon_pixmap;
-			icon_mask_px = xt_active_source->icon_mask;
-			had_icon = True;
+			&& ev->type == SelectionClear) {
+			if (xt_active_source->icon_win != None) {
+				xt_destroy_icon_window(xt_active_source);
+			}
 		}
 
 		consumed = x11dnd_source_process_event(ev);
-		/* SelectionClear calls x11dnd_cancel_drag which frees
-		 * the source session, leaving xt_active_source dangling. */
 		if (consumed && ev->type == SelectionClear
-			&& xt_active_source == NULL) {
-			if (had_icon && icon_dpy != NULL) {
-				XUnmapWindow(icon_dpy, icon_win);
-				XDestroyWindow(icon_dpy, icon_win);
-				XFreePixmap(icon_dpy, icon_pixmap);
-				if (icon_mask_px != None)
-					XFreePixmap(icon_dpy, icon_mask_px);
-			}
+			&& xt_active_source != NULL) {
 			source_session_ended = True;
 		}
-	}
 		break;
 
 	case PropertyNotify:
