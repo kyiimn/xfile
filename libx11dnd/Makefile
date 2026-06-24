@@ -7,7 +7,7 @@ AR ?= ar
 RANLIB ?= ranlib
 
 # X11/Xt include flags (via pkg-config if available, else fallback)
-X11_CFLAGS := $(shell pkg-config --cflags x11 xt 2>/dev/null)
+X11_CFLAGS := $(shell pkg-config --cflags x11 xt xext 2>/dev/null)
 ifeq ($(X11_CFLAGS),)
 X11_CFLAGS = -I/usr/include
 endif

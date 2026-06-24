@@ -1030,6 +1030,9 @@ x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 		return;
 	}
 
+	sess->root_x = x;
+	sess->root_y = y;
+
 	if (child == None) {
 		/* No window under the pointer */
 	}
@@ -1102,4 +1105,14 @@ x11dnd_source_get_display(X11DndSourceSession *sess)
 		return NULL;
 	}
 	return sess->dpy;
+}
+
+int
+x11dnd_source_get_root_xy(X11DndSourceSession *sess, int *x, int *y)
+{
+	if (sess == NULL || x == NULL || y == NULL)
+		return -1;
+	*x = sess->root_x;
+	*y = sess->root_y;
+	return 0;
 }

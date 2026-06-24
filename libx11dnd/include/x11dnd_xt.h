@@ -116,6 +116,28 @@ X11DndSourceSession *x11dnd_xt_start_drag(Widget w, XButtonEvent *event,
 void x11dnd_xt_cancel_drag(void);
 
 /**
+ * @brief Set the drag icon for visual feedback during drag operations.
+ *
+ * Must be called before x11dnd_xt_start_drag(). The library creates an
+ * override-redirect window at drag start, moves it to follow the pointer,
+ * and destroys it at drag end. If icon is NULL, no icon window is created.
+ *
+ * @param icon  Drag icon configuration, or NULL to disable.
+ */
+void x11dnd_xt_set_drag_icon(const X11DndDragIcon *icon);
+
+/**
+ * @brief Set the poll interval for drag tracking.
+ *
+ * Controls how often the library polls pointer position and moves the
+ * drag icon. Lower values give smoother tracking but higher CPU usage.
+ * Default is 16ms. Must be called before starting a drag.
+ *
+ * @param ms  Poll interval in milliseconds (1-1000, clamped).
+ */
+void x11dnd_xt_set_poll_interval(unsigned int ms);
+
+/**
  * @brief Stop the Xt work proc and timer for drag tracking.
  *
  * Call after XdndDrop has been sent. The session remains alive

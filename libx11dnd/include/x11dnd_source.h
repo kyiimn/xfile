@@ -56,6 +56,22 @@ struct X11DndSourceSession {
 	/* Drop result */
 	Bool drop_completed;
 	Atom performed_action;
+
+	/* Drag icon fields */
+	Window icon_win;
+	Pixmap icon_pixmap;
+	Pixmap icon_mask;
+	int icon_width;
+	int icon_height;
+	int icon_hotspot_x;
+	int icon_hotspot_y;
+	unsigned long icon_fg;
+	unsigned long icon_bg;
+	unsigned int icon_flags;
+	const unsigned char *icon_bits;
+	const unsigned char *icon_mask_bits;
+	int root_x;           /* Last known root X coordinate */
+	int root_y;           /* Last known root Y coordinate */
 };
 
 /* Internal functions (not part of public API) */
@@ -87,5 +103,7 @@ int x11dnd_source_handle_selection_clear(XEvent *ev);
 
 void x11dnd_source_track_motion(X11DndSourceSession *sess, int x, int y,
 	Time time);
+
+int x11dnd_source_get_root_xy(X11DndSourceSession *sess, int *x, int *y);
 
 #endif /* X11DND_SOURCE_H */

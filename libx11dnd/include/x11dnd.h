@@ -63,6 +63,37 @@ typedef enum {
 } X11DndAction;
 
 /* =========================================================================
+ * Drag icon flags and data structure
+ * ========================================================================= */
+
+/** @brief Enable ESC key cancel during drag (XQueryKeymap polling). */
+#define X11DND_ICON_CANCEL_ESC  0x01
+
+/** @brief Apply XShape mask from mask_bits for transparent icon background. */
+#define X11DND_ICON_SHAPE_MASK  0x02
+
+/**
+ * @brief Drag icon configuration for visual feedback during drag.
+ *
+ * The application provides bitmap data and the library handles all
+ * window lifecycle: creating the override-redirect icon window at drag
+ * start, moving it to follow the pointer, and destroying it at drag end.
+ *
+ * Set via x11dnd_xt_set_drag_icon() before starting a drag.
+ */
+typedef struct X11DndDragIcon {
+    const unsigned char *bits;       /**< XBM bitmap data (foreground) */
+    const unsigned char *mask_bits;   /**< XBM mask data, or NULL for rectangular */
+    int width;                        /**< Icon width in pixels */
+    int height;                       /**< Icon height in pixels */
+    int hotspot_x;                    /**< Horizontal offset from pointer */
+    int hotspot_y;                    /**< Vertical offset from pointer */
+    unsigned long fg_pixel;           /**< Foreground pixel value */
+    unsigned long bg_pixel;           /**< Background pixel value */
+    unsigned int flags;               /**< X11DND_ICON_* flags */
+} X11DndDragIcon;
+
+/* =========================================================================
  * MIME type constants
  *
  * String constants for common XDnD transfer targets. Use these when

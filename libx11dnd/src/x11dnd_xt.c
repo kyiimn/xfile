@@ -14,6 +14,8 @@
 #include <string.h>
 #include <X11/Intrinsic.h>
 #include <X11/Xatom.h>
+#include <X11/extensions/shape.h>
+#include <X11/keysym.h>
 #include "x11dnd_xt.h"
 #include "x11dnd_atoms.h"
 #include "x11dnd_source.h"
@@ -26,6 +28,13 @@ static XtWorkProcId xt_work_proc_id = None;
 static XtIntervalId xt_poll_timer_id = None;
 static X11DndSourceSession *xt_active_source = NULL;
 
+static const X11DndDragIcon *xt_drag_icon = NULL;
+static unsigned int xt_poll_ms = 16;
+
+static void xt_create_icon_window(X11DndSourceSession *sess);
+static void xt_destroy_icon_window(X11DndSourceSession *sess);
+static void xt_move_icon_window(X11DndSourceSession *sess);
+
 /* Forward declaration for the Xt selection callback */
 static void xt_selection_callback(Widget w, XtPointer client_data,
     Atom *selection, Atom *type, XtPointer value,
@@ -35,9 +44,6 @@ static void xt_selection_callback(Widget w, XtPointer client_data,
 #define XT_DND_EVENT_MASK (NoEventMask)
 /* Events we grab with nonmaskable=True: ClientMessage */
 /* PropertyNotify for INCR transfers is also nonmaskable via XtAddEventHandler */
-
-/* Poll interval for drag tracking (ms) */
-#define XT_DND_POLL_MS 50
 
 /* -------------------------------------------------------------------
  * Helper: walk up the widget hierarchy to find the shell widget
@@ -108,9 +114,160 @@ xt_poll_timer_cb(XtPointer client_data, XtIntervalId *id)
 
 	x11dnd_source_track_motion(sess, 0, 0, CurrentTime);
 
+	xt_move_icon_window(sess);
+
+	/* ESC cancel check */
+	if (sess->icon_flags & X11DND_ICON_CANCEL_ESC) {
+		char keys[32];
+		KeyCode esc;
+		XQueryKeymap(sess->dpy, keys);
+		esc = XKeysymToKeycode(sess->dpy, XK_Escape);
+		if (esc != 0 && (keys[esc >> 3] & (1 << (esc & 7)))) {
+			x11dnd_xt_cancel_drag();
+			return;
+		}
+	}
+
 	xt_poll_timer_id = XtAppAddTimeOut(
 		XtWidgetToApplicationContext(xt_shell),
-		XT_DND_POLL_MS, xt_poll_timer_cb, client_data);
+		xt_poll_ms, xt_poll_timer_cb, client_data);
+}
+
+/* ===================================================================
+ * Drag icon management
+ * =================================================================== */
+
+static void
+xt_create_icon_window(X11DndSourceSession *sess)
+{
+	Display *dpy;
+	Window root, icon_win;
+	Pixmap icon_pixmap, icon_mask;
+	XSetWindowAttributes attr;
+	unsigned long attr_mask;
+	int x, y;
+	Window dummy_root, dummy_child;
+	int dummy_x, dummy_y;
+	unsigned int dummy_mask;
+
+	if (sess == NULL || sess->icon_bits == NULL)
+		return;
+
+	dpy = x11dnd_source_get_display(sess);
+	if (dpy == NULL)
+		return;
+
+	root = DefaultRootWindow(dpy);
+
+	icon_pixmap = XCreatePixmapFromBitmapData(dpy, root,
+		(char *)sess->icon_bits, sess->icon_width, sess->icon_height,
+		sess->icon_fg, sess->icon_bg,
+		DefaultDepth(dpy, DefaultScreen(dpy)));
+	if (icon_pixmap == None)
+		return;
+	sess->icon_pixmap = icon_pixmap;
+
+	icon_mask = None;
+	if (sess->icon_mask_bits != NULL
+		&& (sess->icon_flags & X11DND_ICON_SHAPE_MASK)) {
+		icon_mask = XCreatePixmapFromBitmapData(dpy, root,
+			(char *)sess->icon_mask_bits,
+			sess->icon_width, sess->icon_height,
+			1, 0, 1);
+		sess->icon_mask = icon_mask;
+	}
+
+	attr.background_pixmap = icon_pixmap;
+	attr.border_pixel = 0;
+	attr.event_mask = 0;
+	attr.override_redirect = True;
+	attr_mask = CWOverrideRedirect | CWBackPixmap | CWBorderPixel
+		| CWEventMask;
+
+	icon_win = XCreateWindow(dpy, root, 0, 0,
+		sess->icon_width, sess->icon_height,
+		0, CopyFromParent, InputOutput,
+		CopyFromParent, attr_mask, &attr);
+	sess->icon_win = icon_win;
+
+	if (icon_mask != None) {
+		XShapeCombineMask(dpy, icon_win, ShapeBounding,
+			0, 0, icon_mask, ShapeSet);
+	}
+
+	XMapWindow(dpy, icon_win);
+
+	if (XQueryPointer(dpy, root, &dummy_root, &dummy_child,
+		&x, &y, &dummy_x, &dummy_y, &dummy_mask)) {
+		;
+	} else {
+		x = 0;
+		y = 0;
+	}
+
+	XMoveWindow(dpy, icon_win,
+		x + sess->icon_hotspot_x,
+		y + sess->icon_hotspot_y);
+	XRaiseWindow(dpy, icon_win);
+}
+
+static void
+xt_destroy_icon_window(X11DndSourceSession *sess)
+{
+	Display *dpy;
+
+	if (sess == NULL)
+		return;
+
+	dpy = x11dnd_source_get_display(sess);
+
+	if (sess->icon_win != None && dpy != NULL) {
+		XUnmapWindow(dpy, sess->icon_win);
+		XDestroyWindow(dpy, sess->icon_win);
+		sess->icon_win = None;
+	}
+	if (sess->icon_pixmap != None && dpy != NULL) {
+		XFreePixmap(dpy, sess->icon_pixmap);
+		sess->icon_pixmap = None;
+	}
+	if (sess->icon_mask != None && dpy != NULL) {
+		XFreePixmap(dpy, sess->icon_mask);
+		sess->icon_mask = None;
+	}
+}
+
+static void
+xt_move_icon_window(X11DndSourceSession *sess)
+{
+	Display *dpy;
+	int x, y;
+
+	if (sess == NULL || sess->icon_win == None)
+		return;
+
+	dpy = x11dnd_source_get_display(sess);
+	if (dpy == NULL)
+		return;
+
+	if (x11dnd_source_get_root_xy(sess, &x, &y) == 0) {
+		XMoveWindow(dpy, sess->icon_win,
+			x + sess->icon_hotspot_x,
+			y + sess->icon_hotspot_y);
+	}
+}
+
+void
+x11dnd_xt_set_drag_icon(const X11DndDragIcon *icon)
+{
+	xt_drag_icon = icon;
+}
+
+void
+x11dnd_xt_set_poll_interval(unsigned int ms)
+{
+	if (ms < 1) ms = 1;
+	if (ms > 1000) ms = 1000;
+	xt_poll_ms = ms;
 }
 
 /* ===================================================================
@@ -169,6 +326,9 @@ x11dnd_xt_destroy(void)
 			NULL);
 
 		if (xt_active_source != NULL) {
+			if (xt_active_source->icon_win != None) {
+				xt_destroy_icon_window(xt_active_source);
+			}
 			x11dnd_cancel_drag(xt_active_source);
 			xt_active_source = NULL;
 		}
@@ -297,13 +457,37 @@ x11dnd_xt_start_drag(Widget w, XButtonEvent *event, X11DndClass *callbacks)
 
 	xt_active_source = sess;
 
+	/* Copy icon configuration into session */
+	if (xt_drag_icon != NULL && xt_drag_icon->bits != NULL) {
+		sess->icon_bits = xt_drag_icon->bits;
+		sess->icon_mask_bits = xt_drag_icon->mask_bits;
+		sess->icon_width = xt_drag_icon->width;
+		sess->icon_height = xt_drag_icon->height;
+		sess->icon_hotspot_x = xt_drag_icon->hotspot_x;
+		sess->icon_hotspot_y = xt_drag_icon->hotspot_y;
+		sess->icon_fg = xt_drag_icon->fg_pixel;
+		sess->icon_bg = xt_drag_icon->bg_pixel;
+		sess->icon_flags = xt_drag_icon->flags;
+		sess->icon_win = None;
+		sess->icon_pixmap = None;
+		sess->icon_mask = None;
+		xt_create_icon_window(sess);
+	} else {
+		sess->icon_win = None;
+		sess->icon_pixmap = None;
+		sess->icon_mask = None;
+		sess->icon_bits = NULL;
+		sess->icon_mask_bits = NULL;
+		sess->icon_flags = 0;
+	}
+
 	xt_work_proc_id = XtAppAddWorkProc(
 		XtWidgetToApplicationContext(w),
 		xt_drag_work_proc, (XtPointer)sess);
 
 	xt_poll_timer_id = XtAppAddTimeOut(
 		XtWidgetToApplicationContext(w),
-		XT_DND_POLL_MS, xt_poll_timer_cb, (XtPointer)sess);
+		xt_poll_ms, xt_poll_timer_cb, (XtPointer)sess);
 
 	return sess;
 }
@@ -313,6 +497,10 @@ x11dnd_xt_cancel_drag(void)
 {
 	if (xt_active_source == NULL)
 		return;
+
+	if (xt_active_source->icon_win != None) {
+		xt_destroy_icon_window(xt_active_source);
+	}
 
 	if (xt_work_proc_id != None) {
 		XtRemoveWorkProc(xt_work_proc_id);
@@ -439,13 +627,16 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 			}
 		}
 
-		/* XdndFinished frees the source session, leaving
-		 * xt_active_source dangling. Detect this so we
-		 * can clean up the Xt work proc and timer. */
+	/* XdndFinished frees the source session, leaving
+	 * xt_active_source dangling. Detect this so we
+	 * can clean up the Xt work proc and timer. */
 		if (consumed && xt_active_source != NULL
 			&& atoms != NULL
 			&& ev->xclient.message_type
 				== atoms->XdndFinished) {
+			if (xt_active_source->icon_win != None) {
+				xt_destroy_icon_window(xt_active_source);
+			}
 			source_session_ended = True;
 		}
 	}
@@ -458,6 +649,9 @@ x11dnd_xt_process_event(Widget w, XEvent *ev)
 		 * the source session, leaving xt_active_source dangling. */
 		if (consumed && ev->type == SelectionClear
 			&& xt_active_source != NULL) {
+			if (xt_active_source->icon_win != None) {
+				xt_destroy_icon_window(xt_active_source);
+			}
 			source_session_ended = True;
 		}
 		break;
