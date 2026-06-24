@@ -351,7 +351,7 @@ dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 		KeyCode esc = XKeysymToKeycode(dpy, XK_Escape);
 		Window win = XtWindow(dnd_esc_shell);
 		XUngrabKey(dpy, esc, AnyModifier, win);
-		XtRemoveEventHandler(dnd_esc_shell, KeyPressMask, False,
+		XtRemoveEventHandler(dnd_esc_shell, KeyPressMask, True,
 			dnd_esc_handler, NULL);
 		dnd_esc_shell = NULL;
 	}
@@ -1859,7 +1859,7 @@ dnd_start_drag(Widget w, XEvent *event)
 			Window win = XtWindow(shell);
 			XGrabKey(dpy, esc, AnyModifier, win, False,
 				GrabModeAsync, GrabModeAsync);
-			XtAddEventHandler(shell, KeyPressMask, False,
+			XtAddEventHandler(shell, KeyPressMask, True,
 				dnd_esc_handler, NULL);
 			dnd_esc_shell = shell;
 		}
