@@ -194,7 +194,7 @@ dnd_icon_track_cb(XtPointer client_data, XtIntervalId *id)
 }
 
 static Pixmap
-dnd_create_icon_pixmap(Display *dpy, Window root, unsigned long fg,
+dnd_recolor_icon(Display *dpy, Window root, unsigned long fg,
 	unsigned long bg)
 {
 	Pixmap pm;
@@ -203,21 +203,29 @@ dnd_create_icon_pixmap(Display *dpy, Window root, unsigned long fg,
 		XFreePixmap(dpy, dnd_icon_pixmap);
 		dnd_icon_pixmap = None;
 	}
-	if(dnd_icon_mask != None) {
-		XFreePixmap(dpy, dnd_icon_mask);
-		dnd_icon_mask = None;
-	}
 
 	pm = XCreatePixmapFromBitmapData(dpy, root,
 		(char *)copymove_bits, copymove_width, copymove_height,
 		fg, bg, DefaultDepthOfScreen(DefaultScreenOfDisplay(dpy)));
 
+	dnd_icon_pixmap = pm;
+	return pm;
+}
+
+static Pixmap
+dnd_create_icon_pixmap(Display *dpy, Window root, unsigned long fg,
+	unsigned long bg)
+{
+	if(dnd_icon_mask != None) {
+		XFreePixmap(dpy, dnd_icon_mask);
+		dnd_icon_mask = None;
+	}
+
 	dnd_icon_mask = XCreatePixmapFromBitmapData(dpy, root,
 		(char *)copymove_m_bits, copymove_m_width, copymove_m_height,
 		1, 0, 1);
 
-	dnd_icon_pixmap = pm;
-	return pm;
+	return dnd_recolor_icon(dpy, root, fg, bg);
 }
 
 /* Called when a drag operation begins (after XdndEnter is sent) */
@@ -468,7 +476,8 @@ dnd_status_received(X11DndSourceSession *sess, Bool accept,
 	int x, int y, int w, int h, Atom action)
 {
 	Display *dpy;
-	unsigned long bg;
+	Window root;
+	unsigned long fg, bg;
 	Screen *scr;
 
 	(void)x;
@@ -485,6 +494,8 @@ dnd_status_received(X11DndSourceSession *sess, Bool accept,
 	if(dnd_icon_win == None || dnd_icon_dpy == NULL) return;
 
 	scr = DefaultScreenOfDisplay(dpy);
+	root = DefaultRootWindow(dnd_icon_dpy);
+	fg = WhitePixelOfScreen(scr);
 
 	if(accept) {
 		XColor green;
@@ -510,7 +521,8 @@ dnd_status_received(X11DndSourceSession *sess, Bool accept,
 		dnd_icon_accept = 0;
 	}
 
-	XSetWindowBackground(dnd_icon_dpy, dnd_icon_win, bg);
+	dnd_recolor_icon(dpy, root, fg, bg);
+	XSetWindowBackgroundPixmap(dnd_icon_dpy, dnd_icon_win, dnd_icon_pixmap);
 	XClearWindow(dnd_icon_dpy, dnd_icon_win);
 	XRaiseWindow(dnd_icon_dpy, dnd_icon_win);
 }
