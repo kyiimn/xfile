@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 #include <stdint.h>
 #include <X11/Xatom.h>
+#include <X11/extensions/shape.h>
 #include <Xm/XmP.h>
 #include <Xm/DragDrop.h>
 #include <Xm/AtomMgr.h>
@@ -256,23 +257,26 @@ dnd_on_drag_begin(X11DndSourceSession *sess)
 	screen = DefaultScreen(dpy);
 
 	pm = dnd_create_icon_pixmap(dpy, root,
-		WhitePixelOfScreen(XtScreen(shell)),
-		BlackPixelOfScreen(XtScreen(shell)));
+		BlackPixelOfScreen(XtScreen(shell)),
+		WhitePixelOfScreen(XtScreen(shell)));
 
 	swa.override_redirect = True;
 	swa.background_pixmap = pm;
-	swa.border_pixel = WhitePixelOfScreen(XtScreen(shell));
+	swa.border_pixel = 0;
 	swa.event_mask = ExposureMask;
 
 	dnd_icon_win = XCreateWindow(dpy, root,
 		-100, -100,
 		DND_ICON_WIDTH, DND_ICON_HEIGHT,
-		2,
+		0,
 		DefaultDepth(dpy, screen),
 		InputOutput,
 		DefaultVisual(dpy, screen),
 		CWOverrideRedirect | CWBackPixmap | CWBorderPixel | CWEventMask,
 		&swa);
+
+	XShapeCombineMask(dpy, dnd_icon_win, ShapeBounding, 0, 0,
+		dnd_icon_mask, ShapeSet);
 
 	XMapWindow(dpy, dnd_icon_win);
 
@@ -495,17 +499,19 @@ dnd_status_received(X11DndSourceSession *sess, Bool accept,
 
 	scr = DefaultScreenOfDisplay(dpy);
 	root = DefaultRootWindow(dnd_icon_dpy);
-	fg = WhitePixelOfScreen(scr);
 
 	if(accept) {
-		XColor green;
-		green.red = 0;
-		green.green = 0xFFFF;
-		green.blue = 0;
-		green.flags = DoRed | DoGreen | DoBlue;
-		bg = BlackPixelOfScreen(scr);
-		if(XAllocColor(dpy, DefaultColormapOfScreen(scr), &green)) {
-			bg = green.pixel;
+		fg = BlackPixelOfScreen(scr);
+		{
+			XColor green;
+			green.red = 0;
+			green.green = 0xFFFF;
+			green.blue = 0;
+			green.flags = DoRed | DoGreen | DoBlue;
+			bg = BlackPixelOfScreen(scr);
+			if(XAllocColor(dpy, DefaultColormapOfScreen(scr), &green)) {
+				fg = green.pixel;
+			}
 		}
 		dnd_icon_accept = 1;
 	} else {
@@ -515,8 +521,9 @@ dnd_status_received(X11DndSourceSession *sess, Bool accept,
 		red.blue = 0;
 		red.flags = DoRed | DoGreen | DoBlue;
 		bg = BlackPixelOfScreen(scr);
+		fg = BlackPixelOfScreen(scr);
 		if(XAllocColor(dpy, DefaultColormapOfScreen(scr), &red)) {
-			bg = red.pixel;
+			fg = red.pixel;
 		}
 		dnd_icon_accept = 0;
 	}

@@ -1,7 +1,7 @@
 # XFile common targets
 # This is included by platform specific makefiles in TOP/mf
 
-X_LIBS = -lX11 -lXinerama -lXm -lXt -lXpm -lx11dnd
+X_LIBS = -lX11 -lXext -lXinerama -lXm -lXt -lXpm -lx11dnd
 SYS_LIBS = -lm -lc
 
 CFLAGS += -DPREFIX='"$(PREFIX)"' $(INCDIRS)
