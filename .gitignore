@@ -54,6 +54,10 @@ xfile
 /build-aux/
 /m4/*.m4
 !m4/.gitkeep
+*.in
+.deps/
+.dirstamp
+.depend
 
 # Generated source files
 src/defaults.c
