@@ -48,6 +48,9 @@ Boolean dnd_drag_active(void);
 /* End the active drag: sends XdndDrop if over a target, cancels otherwise */
 void dnd_end_drag(void);
 
+/* Cancel the active drag (e.g. Escape key) */
+void dnd_cancel_drag(void);
+
 /* X error handler for DnD operations */
 int dnd_xerror_handler(Display *dpy, XErrorEvent *ev);
 

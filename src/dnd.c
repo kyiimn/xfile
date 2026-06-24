@@ -1849,6 +1849,13 @@ dnd_drag_active(void)
 }
 
 void
+dnd_cancel_drag(void)
+{
+	if(!dnd_drag_active()) return;
+	x11dnd_xt_cancel_drag();
+}
+
+void
 dnd_end_drag(void)
 {
 	if (dnd_source_session == NULL) {
