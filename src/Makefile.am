@@ -136,12 +136,17 @@ dist_iconsreadme_DATA = $(srcdir)/icons/README
 pixmapsdir = $(datadir)/pixmaps
 dist_pixmaps_DATA = $(srcdir)/xbm/cabinet.xpm
 
+# Desktop entry file
+desktopdir = $(datadir)/applications
+dist_desktop_DATA = $(srcdir)/xfile.desktop
+
 ## ── Extra distribution files ──────────────────────────────
 
 EXTRA_DIST = \
 	mkicons.sh \
 	adtoc.awk \
 	default.db \
+	xfile.desktop \
 	res/prefs.ad \
 	res/fonts.ad \
 	res/fonts-xft.ad \

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.1
+Name=XFile
+GenericName=File Manager
+Comment=Graphical file manager for X11
+Icon=xfile
+Exec=xfile %F
+TryExec=xfile
+Terminal=false
+Categories=System;FileManager;FileTools;Core;
+Keywords=file;manager;directory;folder;Motif;X11;
+MimeType=inode/directory;
+StartupNotify=false
