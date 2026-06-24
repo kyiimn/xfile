@@ -167,7 +167,10 @@ AC_SUBST([SHAREDIR])
 dnl ── Aggregate X libs/CFLAGS ─────────────────────────────
 dnl  Combined for cleanliness in src/Makefile.am.
 XFILE_X_CFLAGS="$X11_CFLAGS $XT_CFLAGS $MOTIF_CFLAGS $XPM_CFLAGS $XINERAMA_CFLAGS $XEXT_CFLAGS"
-XFILE_X_LIBS="$X11_LIBS $XT_LIBS $MOTIF_LIBS $XPM_LIBS $XINERAMA_LIBS $XEXT_LIBS -lm"
+dnl  Motif must come before Xt to ensure vendorShellWidgetClass resolves
+dnl  to libXm's implementation. Wrong order causes BadWindow on startup
+dnl  because XtRealizeWidget uses libXt's stub VendorShell (Red Hat #870712).
+XFILE_X_LIBS="$MOTIF_LIBS $X11_LIBS $XT_LIBS $XPM_LIBS $XINERAMA_LIBS $XEXT_LIBS -lm"
 AC_SUBST([XFILE_X_CFLAGS])
 AC_SUBST([XFILE_X_LIBS])
 
