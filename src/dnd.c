@@ -564,7 +564,12 @@ dnd_position_received(X11DndTargetSession *sess,
 
 	if(item_at_xy(w, wx, wy, &index)
 		&& S_ISDIR(fl->items[index].mode)) {
-		dnd_highlight_item(w, index);
+		if(!fl->dnd_highlight_active || fl->dnd_highlight_item != index) {
+			dnd_clear_highlight(w);
+			fl->dnd_highlight_item = index;
+			fl->dnd_highlight_active = True;
+			dnd_highlight_item(w, index);
+		}
 		if(dnd_saved_dest_name) XtFree(dnd_saved_dest_name);
 		dnd_saved_dest_name = XtNewString(fl->items[index].name);
 	} else {
