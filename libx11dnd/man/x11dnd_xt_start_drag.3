@@ -1,0 +1,88 @@
+.\" Copyright (C) 2025-2026 alx@fastestcode.org
+.\"
+.\" Permission is hereby granted, free of charge, to any person obtaining
+.\" a copy of this software and associated documentation files (the
+.\" "Software"), to deal in the Software without restriction, including
+.\" without limitation the rights to use, copy, modify, merge, publish,
+.\" distribute, sublicense, and/or sell copies of the Software, and to
+.\" permit persons to whom the Software is furnished to do so, subject to
+.\" the following conditions:
+.\"
+.\" The above copyright notice and this permission notice shall be included
+.\" in all copies or substantial portions of the Software.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+.\" EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+.\" MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+.\" IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+.\" CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+.\" TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+.\" SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+.Dd June 24, 2026
+.Dt X11DND_XT_START_DRAG 3
+.Os
+.Sh NAME
+.Nm x11dnd_xt_start_drag
+.Nd initiate a drag from an Xt widget
+.Sh LIBRARY
+.Lb libx11dnd
+.Sh SYNOPSIS
+.In x11dnd_xt.h
+.Ft X11DndSourceSession *
+.Fn x11dnd_xt_start_drag "Widget w" "XButtonEvent *event" "X11DndClass *callbacks"
+.Sh DESCRIPTION
+.Fn x11dnd_xt_start_drag
+initiates a drag operation from the window of
+.Fa w .
+It calls
+.Xr x11dnd_start_drag 3
+and installs an Xt work proc that polls the pointer position,
+moves the drag icon window (if configured via
+.Xr x11dnd_xt_set_drag_icon 3 ) ,
+and dispatches XDnD events.
+.Pp
+.Fa event
+should be the
+.Vt XButtonEvent
+that triggered the drag, typically obtained from an Xt translation or
+event handler.
+.Pp
+The
+.Fa callbacks
+table must remain valid for the lifetime of the drag.
+At least the
+.Fn get_drag_data
+callback should be set to provide selection data when the target requests it.
+.Pp
+If a drag icon has been configured with
+.Xr x11dnd_xt_set_drag_icon 3 ,
+the library creates an override-redirect icon window at drag start,
+moves it to follow the pointer during the drag, and destroys it at drag end.
+.Sh RETURN VALUES
+Returns a new
+.Vt X11DndSourceSession
+handle on success, or
+.Dv NULL
+on failure.
+.Sh EXAMPLES
+.Bd -literal
+X11DndClass dnd_class = {0};
+dnd_class.get_drag_data = my_get_drag_data_cb;
+dnd_class.on_drag_end  = my_drag_end_cb;
+
+static void start_drag_cb(Widget w, XEvent *event,
+                          String *args, Cardinal *n_args)
+{
+    x11dnd_xt_start_drag(w, &event->xbutton, &dnd_class);
+}
+.Ed
+.Sh SEE ALSO
+.Xr x11dnd_xt_cancel_drag 3 ,
+.Xr x11dnd_xt_set_drag_icon 3 ,
+.Xr x11dnd_start_drag 3 ,
+.Xr x11dnd 3
+.Sh AUTHORS
+.An alx@fastestcode.org
+.Sh LICENSE
+.Nm
+is distributed under the X/MIT license.

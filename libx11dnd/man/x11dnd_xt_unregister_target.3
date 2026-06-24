@@ -1,0 +1,60 @@
+.\" Copyright (C) 2025-2026 alx@fastestcode.org
+.\"
+.\" Permission is hereby granted, free of charge, to any person obtaining
+.\" a copy of this software and associated documentation files (the
+.\" "Software"), to deal in the Software without restriction, including
+.\" without limitation the rights to use, copy, modify, merge, publish,
+.\" distribute, sublicense, and/or sell copies of the Software, and to
+.\" permit persons to whom the Software is furnished to do so, subject to
+.\" the following conditions:
+.\"
+.\" The above copyright notice and this permission notice shall be included
+.\" in all copies or substantial portions of the Software.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+.\" EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+.\" MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+.\" IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+.\" CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+.\" TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+.\" SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+.Dd June 24, 2026
+.Dt X11DND_XT_UNREGISTER_TARGET 3
+.Os
+.Sh NAME
+.Nm x11dnd_xt_unregister_target
+.Nd unregister a widget's shell as an XDnD drop target (Xt convenience)
+.Sh LIBRARY
+.Lb libx11dnd
+.Sh SYNOPSIS
+.In x11dnd_xt.h
+.Ft void
+.Fn x11dnd_xt_unregister_target "Widget w"
+.Sh DESCRIPTION
+.Fn x11dnd_xt_unregister_target
+removes the
+.Li XdndAware
+property from the shell ancestor of
+.Fa w
+and discards any pending target session.
+It walks up from
+.Fa w
+to its shell ancestor via
+.Fn XtParent
+and calls
+.Xr x11dnd_unregister_target 3
+on that shell window.
+.Pp
+After calling this function, the widget will no longer receive
+XDnD drop events.
+.Sh RETURN VALUES
+None.
+.Sh SEE ALSO
+.Xr x11dnd_xt_register_target 3 ,
+.Xr x11dnd_unregister_target 3 ,
+.Xr x11dnd 3
+.Sh AUTHORS
+.An alx@fastestcode.org
+.Sh LICENSE
+.Nm
+is distributed under the X/MIT license.

@@ -1,0 +1,388 @@
+.\" Copyright (C) 2025-2026 alx@fastestcode.org
+.\"
+.\" Permission is hereby granted, free of charge, to any person obtaining
+.\" a copy of this software and associated documentation files (the
+.\" "Software"), to deal in the Software without restriction, including
+.\" without limitation the rights to use, copy, modify, merge, publish,
+.\" distribute, sublicense, and/or sell copies of the Software, and to
+.\" permit persons to whom the Software is furnished to do so, subject to
+.\" the following conditions:
+.\"
+.\" The above copyright notice and this permission notice shall be included
+.\" in all copies or substantial portions of the Software.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+.\" EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+.\" MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+.\" IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+.\" CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+.\" TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+.\" SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+.Dd June 24, 2026
+.Dt X11DND 3
+.Os
+.Sh NAME
+.Nm libx11dnd
+.Nd C99 library for the X Drag-and-Drop protocol version 5
+.Sh LIBRARY
+.Lb libx11dnd
+.Sh SYNOPSIS
+.In x11dnd.h
+.Pp
+.In x11dnd_xt.h
+.Sh DESCRIPTION
+The
+.Nm
+library implements the freedesktop.org X Drag-and-Drop (XDnD) protocol
+version 5 for X11 clients.
+It provides both a pure Xlib core API and an optional Xt/Motif integration
+wrapper, making it suitable for any X11 program or for applications
+already using the X Toolkit Intrinsics.
+.Pp
+A separate static convenience library,
+.Li libx11dnd.a ,
+is built from the
+.Nm
+source and linked directly into the consuming application.
+The public API is split between two headers:
+.Bl -tag -width 16n
+.It In x11dnd.h
+Pure Xlib core API.
+No Xt or Motif dependency.
+.It In x11dnd_xt.h
+Convenience wrapper for Xt/Motif programs.
+This header includes
+.In X11/Intrinsic.h .
+.El
+.Pp
+The library handles the full drag-and-drop lifecycle: source sessions,
+target registration, XdndEnter, XdndPosition, XdndStatus, XdndLeave,
+XdndDrop, XdndFinished, action negotiation, type selection, incremental
+selection transfers, XdndDirectSave, and XdndProxy support.
+.Sh PROTOCOL VERSIONS
+.Bl -tag -width "X11DND_VERSION_MIN"
+.It Dv X11DND_VERSION_5
+The maximum XDnD protocol version implemented by the library, currently 5.
+.It Dv X11DND_VERSION_MIN
+The minimum XDnD protocol version supported by the library, currently 3.
+Peers advertising a version below this value will be rejected.
+.El
+.Sh ACTIONS
+The
+.Vt X11DndAction
+enum provides logical identifiers for the standard XDnD actions.
+The library maps these to interned
+.Li XdndAction*
+atoms during
+.Fn x11dnd_init .
+.Bl -tag -width "X11DND_ACTION_DIRECT_SAVE" -offset indent
+.It Dv X11DND_ACTION_COPY
+Copy action
+.Pq XdndActionCopy .
+.It Dv X11DND_ACTION_MOVE
+Move action
+.Pq XdndActionMove .
+.It Dv X11DND_ACTION_LINK
+Link action
+.Pq XdndActionLink .
+.It Dv X11DND_ACTION_ASK
+Ask-user action
+.Pq XdndActionAsk .
+The target should present a menu and let the user choose.
+.It Dv X11DND_ACTION_PRIVATE
+Private action
+.Pq XdndActionPrivate .
+.It Dv X11DND_ACTION_DIRECT_SAVE
+Direct save action
+.Pq XdndActionDirectSave .
+Used by the XdndDirectSave protocol.
+.El
+.Sh DRAG ICON FLAGS
+.Bl -tag -width "X11DND_ICON_SHAPE_MASK"
+.It Dv X11DND_ICON_CANCEL_ESC
+.Pq 0x01
+Enable ESC key cancel during a drag.
+The library polls the keyboard with
+.Xr XQueryKeymap 3
+in its timer callback and calls
+.Fn x11dnd_xt_cancel_drag
+when Escape is pressed.
+.It Dv X11DND_ICON_SHAPE_MASK
+.Pq 0x02
+Apply the
+.Fa mask_bits
+field of
+.Vt X11DndDragIcon
+as an XShape bounding mask for a transparent icon background.
+The XShape extension is required when this flag is used, and the
+application must link against
+.Li -lXext .
+.El
+.Sh MIME TYPES
+The following string constants are provided for common XDnD transfer targets.
+.Bl -tag -width "X11DND_MIME_FILE_LIST" -offset indent
+.It Dv X11DND_MIME_URI_LIST
+.Li "text/uri-list"
+\(em RFC 2483 URI list, the primary file drag format.
+.It Dv X11DND_MIME_UTF8_STRING
+.Li "UTF8_STRING"
+\(em UTF-8 encoded string.
+.It Dv X11DND_MIME_STRING
+.Li "STRING"
+\(em Latin-1 encoded string.
+.It Dv X11DND_MIME_TEXT_PLAIN
+.Li "text/plain"
+\(em Plain text.
+.It Dv X11DND_MIME_FILE_NAME
+.Li "FILE_NAME"
+\(em Legacy COMPOUND_TEXT file name.
+.It Dv X11DND_MIME_FILE_LIST
+.Li "application/x-file-list"
+\(em XFile-specific file list format.
+.El
+.Sh DATA TYPES
+.Ss X11DndDragIcon
+The
+.Vt X11DndDragIcon
+structure describes the visual drag icon used during Xt/Motif drags.
+.Bd -literal
+typedef struct X11DndDragIcon {
+    const unsigned char *bits;
+    const unsigned char *mask_bits;
+    int width;
+    int height;
+    int hotspot_x;
+    int hotspot_y;
+    unsigned long fg_pixel;
+    unsigned long bg_pixel;
+    unsigned int flags;
+} X11DndDragIcon;
+.Ed
+.Pp
+.Bl -tag -width "mask_bits"
+.It Fa bits
+XBM bitmap data for the icon foreground.
+.It Fa mask_bits
+XBM mask data, or
+.Dv NULL
+for a rectangular icon with no shape mask.
+.It Fa width , Fa height
+Icon dimensions in pixels.
+.It Fa hotspot_x , Fa hotspot_y
+Offset from the pointer position.
+For example, values of 12 place the icon 12 pixels right and 12 pixels down from the pointer.
+.It Fa fg_pixel
+Foreground pixel value, for example
+.Fn BlackPixelOfScreen .
+.It Fa bg_pixel
+Background pixel value, for example
+.Fn WhitePixelOfScreen .
+.It Fa flags
+Bitwise OR of
+.Dv X11DND_ICON_CANCEL_ESC
+and
+.Dv X11DND_ICON_SHAPE_MASK .
+.El
+.Pp
+The
+.Vt X11DndDragIcon
+struct passed to
+.Fn x11dnd_xt_set_drag_icon
+must have static or global lifetime.
+The library stores only the pointer, not a copy.
+Do NOT pass a stack-allocated struct.
+.Ss X11DndClass
+The
+.Vt X11DndClass
+structure is the callback table passed to
+.Fn x11dnd_start_drag
+for drag sources and to
+.Fn x11dnd_register_target
+for drop targets.
+Unused slots may be left as
+.Dv NULL .
+.Bl -tag -width "finished_received"
+.It Fn on_drag_begin
+Called when a drag operation begins, after
+.Li XdndEnter
+has been sent.
+If a drag icon is configured, the library has already created the icon window at this point.
+.It Fn on_drag_end
+Called when a drag operation ends, after
+.Li XdndFinished
+or cancellation.
+The library destroys the icon window before calling this callback.
+.It Fn get_drag_data
+Provide drag data for a
+.Li SelectionRequest .
+See
+.Vt x11dnd_drag_data_cb .
+.It Fn status_received
+Receive
+.Li XdndStatus
+from the target.
+See
+.Vt x11dnd_status_cb .
+.It Fn finished_received
+Receive
+.Li XdndFinished
+from the target.
+See
+.Vt x11dnd_finished_cb .
+.It Fn on_enter
+Receive
+.Li XdndEnter :
+the source has begun a drag over this target.
+.It Fn position_received
+Receive
+.Li XdndPosition .
+See
+.Vt x11dnd_position_cb .
+.It Fn on_leave
+Receive
+.Li XdndLeave :
+the source has left the target window.
+.It Fn drop_received
+Receive drop data after
+.Li SelectionNotify .
+See
+.Vt x11dnd_drop_received_cb .
+.It Fn action_ask
+Handle
+.Li XdndActionAsk
+by presenting an action menu.
+See
+.Vt x11dnd_action_ask_cb .
+.It Fn on_error
+Called when the library reports an error.
+.Fa severity
+is 0 for info, 1 for warning, 2 for error, and 3 for fatal.
+.El
+.Ss Callback typedefs
+.Bl -tag -width "x11dnd_drop_received_cb"
+.It Vt x11dnd_drag_data_cb
+.Bd -literal
+typedef void (*x11dnd_drag_data_cb)(
+    X11DndSourceSession *sess, Atom target,
+    unsigned char **data_ret, unsigned long *length_ret,
+    int *format_ret);
+.Ed
+Called when the source receives a
+.Li SelectionRequest .
+The source must allocate a buffer with
+.Xr Xmalloc 3 ,
+fill
+.Fa *data_ret ,
+.Fa *length_ret ,
+and
+.Fa *format_ret .
+The library frees
+.Fa *data_ret
+with
+.Xr XFree 3
+after delivery.
+.It Vt x11dnd_drop_received_cb
+.Bd -literal
+typedef void (*x11dnd_drop_received_cb)(
+    X11DndTargetSession *sess, Atom target,
+    unsigned char *data, unsigned long length, int format);
+.Ed
+Called after the target has fetched the selection data.
+.Fa data
+is read-only and is freed after the callback returns.
+.It Vt x11dnd_action_ask_cb
+.Bd -literal
+typedef void (*x11dnd_action_ask_cb)(
+    X11DndTargetSession *sess, Atom *actions, int n_actions,
+    char **descriptions, int n_desc, Atom *chosen_action_ret);
+.Ed
+Called when
+.Li XdndActionAsk
+is negotiated.
+Store the atom selected by the user in
+.Fa *chosen_action_ret .
+.It Vt x11dnd_position_cb
+.Bd -literal
+typedef void (*x11dnd_position_cb)(
+    X11DndTargetSession *sess, int x, int y, Time time,
+    Atom action, Bool *accept_ret, Atom *action_ret,
+    int *rect_x, int *rect_y, int *rect_w, int *rect_h);
+.Ed
+Called whenever the source sends an
+.Li XdndPosition
+message.
+Set
+.Fa *rect_x
+through
+.Fa *rect_h
+to 0 to report no rectangle.
+.It Vt x11dnd_status_cb
+.Bd -literal
+typedef void (*x11dnd_status_cb)(
+    X11DndSourceSession *sess, Bool accept,
+    int x, int y, int w, int h, Atom action);
+.Ed
+Called when the source receives an
+.Li XdndStatus
+reply from the target.
+.It Vt x11dnd_finished_cb
+.Bd -literal
+typedef void (*x11dnd_finished_cb)(
+    X11DndSourceSession *sess, Bool success, Atom performed_action);
+.Ed
+Called when the source receives
+.Li XdndFinished .
+.Fa performed_action
+is
+.Dv None
+if the target does not support version 5 action reporting.
+.El
+.Sh OPAQUE HANDLES
+The library uses two opaque handle types:
+.Bl -tag -width "X11DndTargetSession"
+.It Vt X11DndSourceSession
+Created by
+.Fn x11dnd_start_drag ,
+destroyed by
+.Fn x11dnd_end_drag
+or
+.Fn x11dnd_cancel_drag .
+Carries the source window, negotiated types, actions, callbacks, and user data.
+.It Vt X11DndTargetSession
+Created implicitly when
+.Li XdndEnter
+is received for a registered window, destroyed when
+.Li XdndLeave
+is received or the window is unregistered.
+.El
+.Sh THREAD SAFETY
+.Nm
+is not thread-safe.
+All calls must be made from the Xt main thread, or from whatever single
+thread owns the
+.Vt Display
+connection and runs the application's X event loop.
+.Sh SEE ALSO
+.Xr x11dnd_init 3 ,
+.Xr x11dnd_destroy 3 ,
+.Xr x11dnd_start_drag 3 ,
+.Xr x11dnd_register_target 3 ,
+.Xr x11dnd_set_aware 3 ,
+.Xr x11dnd_source_get_user_data 3 ,
+.Xr x11dnd_xt_init 3 ,
+.Xr x11dnd_xt_register_target 3 ,
+.Xr x11dnd_xt_start_drag 3 ,
+.Xr x11dnd_xt_set_drag_icon 3 ,
+.Xr x11dnd_xt_process_event 3 ,
+.Xr X 7 ,
+.Xr Xlib 3 ,
+.Xr Xt 3 ,
+.Xr Xm 3
+.Sh AUTHORS
+.An alx@fastestcode.org
+.Sh LICENSE
+.Nm
+is distributed under the X/MIT license.
+See the
+.Pa COPYING
+file in the source distribution for the full license text.

@@ -1,0 +1,82 @@
+.\" Copyright (C) 2025-2026 alx@fastestcode.org
+.\"
+.\" Permission is hereby granted, free of charge, to any person obtaining
+.\" a copy of this software and associated documentation files (the
+.\" "Software"), to deal in the Software without restriction, including
+.\" without limitation the rights to use, copy, modify, merge, publish,
+.\" distribute, sublicense, and/or sell copies of the Software, and to
+.\" permit persons to whom the Software is furnished to do so, subject to
+.\" the following conditions:
+.\"
+.\" The above copyright notice and this permission notice shall be included
+.\" in all copies or substantial portions of the Software.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+.\" EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+.\" MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+.\" IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+.\" CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+.\" TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+.\" SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+.Dd June 24, 2026
+.Dt X11DND_XT_INIT 3
+.Os
+.Sh NAME
+.Nm x11dnd_xt_init
+.Nd initialize libx11dnd for Xt-based applications
+.Sh LIBRARY
+.Lb libx11dnd
+.Sh SYNOPSIS
+.In x11dnd_xt.h
+.Ft int
+.Fn x11dnd_xt_init "Widget app_shell"
+.Sh DESCRIPTION
+.Fn x11dnd_xt_init
+initializes the
+.Nm libx11dnd
+library for Xt/Motif applications.
+It calls
+.Xr x11dnd_init 3
+on the display of
+.Fa app_shell ,
+then registers Xt event handlers on the shell for
+.Li ClientMessage
+(XDnD protocol events) and
+.Li PropertyNotify
+(INCR transfer) events.
+.Pp
+The application shell
+.Fa app_shell
+must be realized before calling this function.
+.Pp
+This function should be called once at application startup, after
+.Fn XtAppInitialize
+or
+.Fn XtVaOpenApplication
+and after the shell is realized.
+.Sh RETURN VALUES
+Returns 0 on success.
+Returns a non-zero value if
+.Xr x11dnd_init 3
+failed or Xt event handler registration failed.
+.Sh EXAMPLES
+.Bd -literal
+Widget shell = XtVaOpenApplication(&app, "MyApp",
+    NULL, 0, &argc, argv, NULL,
+    sessionShellWidgetClass, NULL);
+XtRealizeWidget(shell);
+
+if (x11dnd_xt_init(shell) != 0) {
+    fprintf(stderr, "Failed to init libx11dnd\\n");
+    exit(1);
+}
+.Ed
+.Sh SEE ALSO
+.Xr x11dnd_xt_destroy 3 ,
+.Xr x11dnd_init 3 ,
+.Xr x11dnd 3
+.Sh AUTHORS
+.An alx@fastestcode.org
+.Sh LICENSE
+.Nm
+is distributed under the X/MIT license.

@@ -1,0 +1,79 @@
+.\" Copyright (C) 2025-2026 alx@fastestcode.org
+.\"
+.\" Permission is hereby granted, free of charge, to any person obtaining
+.\" a copy of this software and associated documentation files (the
+.\" "Software"), to deal in the Software without restriction, including
+.\" without limitation the rights to use, copy, modify, merge, publish,
+.\" distribute, sublicense, and/or sell copies of the Software, and to
+.\" permit persons to whom the Software is furnished to do so, subject to
+.\" the following conditions:
+.\"
+.\" The above copyright notice and this permission notice shall be included
+.\" in all copies or substantial portions of the Software.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+.\" EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+.\" MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+.\" IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+.\" CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+.\" TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+.\" SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+.Dd June 24, 2026
+.Dt X11DND_XT_REGISTER_TARGET 3
+.Os
+.Sh NAME
+.Nm x11dnd_xt_register_target
+.Nd register a widget's shell as an XDnD drop target (Xt convenience)
+.Sh LIBRARY
+.Lb libx11dnd
+.Sh SYNOPSIS
+.In x11dnd_xt.h
+.Ft int
+.Fn x11dnd_xt_register_target "Widget w" "X11DndClass *callbacks"
+.Sh DESCRIPTION
+.Fn x11dnd_xt_register_target
+walks up from
+.Fa w
+to its shell ancestor via
+.Fn XtParent
+and registers that shell window as an XDnD drop target.
+The
+.Li XdndAware
+property is set on the shell window because the XDnD specification
+requires awareness to be advertised on the top-level shell.
+.Pp
+The
+.Fa callbacks
+table must remain valid while the widget is registered.
+At minimum,
+.Fn position_received
+and
+.Fn drop_received
+should be set for a functional drop target.
+.Pp
+This function internally calls
+.Xr x11dnd_register_target 3
+on the shell window.
+It also ensures that
+.Xr x11dnd_init 3
+has been called on the display.
+.Sh RETURN VALUES
+Returns 0 on success.
+Returns a non-zero value on failure.
+.Sh EXAMPLES
+.Bd -literal
+X11DndClass dnd_class = {0};
+dnd_class.position_received = my_position_cb;
+dnd_class.drop_received     = my_drop_cb;
+
+x11dnd_xt_register_target(my_list_widget, &dnd_class);
+.Ed
+.Sh SEE ALSO
+.Xr x11dnd_xt_unregister_target 3 ,
+.Xr x11dnd_register_target 3 ,
+.Xr x11dnd 3
+.Sh AUTHORS
+.An alx@fastestcode.org
+.Sh LICENSE
+.Nm
+is distributed under the X/MIT license.

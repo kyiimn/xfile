@@ -1,0 +1,69 @@
+.\" Copyright (C) 2025-2026 alx@fastestcode.org
+.\"
+.\" Permission is hereby granted, free of charge, to any person obtaining
+.\" a copy of this software and associated documentation files (the
+.\" "Software"), to deal in the Software without restriction, including
+.\" without limitation the rights to use, copy, modify, merge, publish,
+.\" distribute, sublicense, and/or sell copies of the Software, and to
+.\" permit persons to whom the Software is furnished to do so, subject to
+.\" the following conditions:
+.\"
+.\" The above copyright notice and this permission notice shall be included
+.\" in all copies or substantial portions of the Software.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+.\" EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+.\" MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+.\" IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+.\" CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+.\" TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+.\" SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+.Dd June 24, 2026
+.Dt X11DND_TARGET_PROCESS_EVENT 3
+.Os
+.Sh NAME
+.Nm x11dnd_target_process_event
+.Nd dispatch an X event to registered drop targets
+.Sh LIBRARY
+.Lb libx11dnd
+.Sh SYNOPSIS
+.In x11dnd.h
+.Ft int
+.Fn x11dnd_target_process_event "XEvent *ev"
+.Sh DESCRIPTION
+.Fn x11dnd_target_process_event
+dispatches X events to registered drop targets.
+Feed
+.Li ClientMessage
+.Pq XdndEnter, XdndPosition, XdndDrop, XdndLeave
+and
+.Li SelectionNotify
+events to this function from the application's event loop.
+.Pp
+This function should be called for every X event received while drop
+targets are registered.
+If the event is not related to XDnD target processing, it returns 0
+and the event should be dispatched normally.
+.Sh RETURN VALUES
+Returns 1 if the event was consumed by a target session, 0 otherwise.
+.Sh EXAMPLES
+.Bd -literal
+XEvent ev;
+while (1) {
+    XNextEvent(dpy, &ev);
+    if (!x11dnd_target_process_event(&ev)) {
+        /* Event was not for libx11dnd; handle normally */
+    }
+}
+.Ed
+.Sh SEE ALSO
+.Xr x11dnd_register_target 3 ,
+.Xr x11dnd_source_process_event 3 ,
+.Xr x11dnd_target_request_selection 3 ,
+.Xr x11dnd_target_handle_selection_notify 3 ,
+.Xr x11dnd 3
+.Sh AUTHORS
+.An alx@fastestcode.org
+.Sh LICENSE
+.Nm
+is distributed under the X/MIT license.

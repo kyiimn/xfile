@@ -1,0 +1,128 @@
+.\" Copyright (C) 2025-2026 alx@fastestcode.org
+.\"
+.\" Permission is hereby granted, free of charge, to any person obtaining
+.\" a copy of this software and associated documentation files (the
+.\" "Software"), to deal in the Software without restriction, including
+.\" without limitation the rights to use, copy, modify, merge, publish,
+.\" distribute, sublicense, and/or sell copies of the Software, and to
+.\" permit persons to whom the Software is furnished to do so, subject to
+.\" the following conditions:
+.\"
+.\" The above copyright notice and this permission notice shall be included
+.\" in all copies or substantial portions of the Software.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+.\" EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+.\" MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+.\" IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+.\" CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+.\" TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+.\" SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+.Dd June 24, 2026
+.Dt X11DND_START_DRAG 3
+.Os
+.Sh NAME
+.Nm x11dnd_start_drag
+.Nd begin a drag operation from a source window
+.Sh LIBRARY
+.Lb libx11dnd
+.Sh SYNOPSIS
+.In x11dnd.h
+.Ft X11DndSourceSession *
+.Fn x11dnd_start_drag "Display *dpy" "Window source_win" "X11DndClass *callbacks" "Time time" "Atom *types" "int n_types" "Atom *actions" "int n_actions" "void *user_data"
+.Sh DESCRIPTION
+.Fn x11dnd_start_drag
+begins a drag-and-drop operation from
+.Fa source_win .
+It takes ownership of the
+.Li XdndSelection
+selection, sets up a source session with the given callbacks,
+offered types, offered actions, and user data, and returns an opaque
+source session handle.
+.Pp
+The
+.Fa callbacks
+table must remain valid for the lifetime of the drag.
+At least the
+.Fn get_drag_data
+callback should be set to provide selection data when the target requests it.
+.Pp
+.Fa time
+is the server timestamp of the button event that initiated the drag
+(typically
+.Fa event->xbutton.time
+from a
+.Vt XButtonEvent ) .
+.Pp
+.Fa types
+is an array of target type atoms offered by the source, for example
+.Dv X11DND_MIME_URI_LIST .
+.Fa n_types
+specifies the number of entries in
+.Fa types .
+.Pp
+.Fa actions
+is an array of action atoms offered by the source, for example
+.Dv X11DND_ACTION_COPY .
+If
+.Fa actions
+is
+.Dv NULL ,
+the source offers copy only.
+.Fa n_actions
+specifies the number of entries in
+.Fa actions .
+.Pp
+.Fa user_data
+is an opaque pointer stored in the session and retrievable via
+.Xr x11dnd_source_get_user_data 3 .
+It may be
+.Dv NULL .
+.Pp
+After calling
+.Fn x11dnd_start_drag ,
+the application must feed X events to
+.Xr x11dnd_source_process_event 3
+from its event loop.
+The source session remains active until
+.Xr x11dnd_end_drag 3
+or
+.Xr x11dnd_cancel_drag 3
+is called.
+.Sh RETURN VALUES
+Returns a new
+.Vt X11DndSourceSession
+handle on success, or
+.Dv NULL
+on failure.
+A failure typically indicates that the
+.Li XdndSelection
+could not be acquired or memory allocation failed.
+.Sh EXAMPLES
+.Bd -literal
+X11DndClass dnd_class = {0};
+dnd_class.get_drag_data = my_drag_data_cb;
+dnd_class.on_drag_end = my_drag_end_cb;
+
+Atom types[] = { XInternAtom(dpy, X11DND_MIME_URI_LIST, False) };
+Atom actions[] = { XInternAtom(dpy, "XdndActionCopy", False),
+                   XInternAtom(dpy, "XdndActionMove", False) };
+
+X11DndSourceSession *sess = x11dnd_start_drag(
+    dpy, my_window, &dnd_class,
+    event.xbutton.time, types, 1, actions, 2, NULL);
+if (!sess) {
+    fprintf(stderr, "Drag start failed\\n");
+}
+.Ed
+.Sh SEE ALSO
+.Xr x11dnd_cancel_drag 3 ,
+.Xr x11dnd_end_drag 3 ,
+.Xr x11dnd_source_process_event 3 ,
+.Xr x11dnd_source_get_user_data 3 ,
+.Xr x11dnd 3
+.Sh AUTHORS
+.An alx@fastestcode.org
+.Sh LICENSE
+.Nm
+is distributed under the X/MIT license.

@@ -1,0 +1,82 @@
+.\" Copyright (C) 2025-2026 alx@fastestcode.org
+.\"
+.\" Permission is hereby granted, free of charge, to any person obtaining
+.\" a copy of this software and associated documentation files (the
+.\" "Software"), to deal in the Software without restriction, including
+.\" without limitation the rights to use, copy, modify, merge, publish,
+.\" distribute, sublicense, and/or sell copies of the Software, and to
+.\" permit persons to whom the Software is furnished to do so, subject to
+.\" the following conditions:
+.\"
+.\" The above copyright notice and this permission notice shall be included
+.\" in all copies or substantial portions of the Software.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+.\" EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+.\" MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+.\" IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+.\" CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+.\" TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+.\" SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+.Dd June 24, 2026
+.Dt X11DND_TARGET_REQUEST_SELECTION 3
+.Os
+.Sh NAME
+.Nm x11dnd_target_request_selection
+.Nd request drop data from the drag source after XdndDrop
+.Sh LIBRARY
+.Lb libx11dnd
+.Sh SYNOPSIS
+.In x11dnd.h
+.Ft Bool
+.Fn x11dnd_target_request_selection "X11DndTargetSession *sess" "Atom property"
+.Sh DESCRIPTION
+.Fn x11dnd_target_request_selection
+requests the selection data from the drag source after
+.Li XdndDrop
+has been received by the target.
+The application should call this from its event loop after receiving
+.Li XdndDrop .
+.Pp
+The library selects the best type from the source's type list,
+preferring
+.Dv X11DND_MIME_URI_LIST ,
+then
+.Dv UTF8_STRING ,
+.Dv STRING ,
+.Dv text/plain ,
+and
+.Dv FILE_NAME .
+.Pp
+.Fa sess
+must be a valid target session in the DROP_PENDING state.
+.Fa property
+is the property atom to use for the transfer, typically
+.Li XdndSelection
+or a dedicated property atom such as one named
+.Li Xdnd_DATA .
+.Pp
+The resulting
+.Li SelectionNotify
+event should be fed to
+.Xr x11dnd_target_handle_selection_notify 3
+or
+.Xr x11dnd_target_process_event 3 .
+.Sh RETURN VALUES
+Returns
+.Dv True
+if the selection request was sent successfully.
+Returns
+.Dv False
+if the session is invalid, not in DROP_PENDING state, or the
+selection request could not be sent.
+.Sh SEE ALSO
+.Xr x11dnd_target_handle_selection_notify 3 ,
+.Xr x11dnd_target_process_event 3 ,
+.Xr x11dnd_register_target 3 ,
+.Xr x11dnd 3
+.Sh AUTHORS
+.An alx@fastestcode.org
+.Sh LICENSE
+.Nm
+is distributed under the X/MIT license.

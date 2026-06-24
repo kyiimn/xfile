@@ -1,0 +1,87 @@
+.\" Copyright (C) 2025-2026 alx@fastestcode.org
+.\"
+.\" Permission is hereby granted, free of charge, to any person obtaining
+.\" a copy of this software and associated documentation files (the
+.\" "Software"), to deal in the Software without restriction, including
+.\" without limitation the rights to use, copy, modify, merge, publish,
+.\" distribute, sublicense, and/or sell copies of the Software, and to
+.\" permit persons to whom the Software is furnished to do so, subject to
+.\" the following conditions:
+.\"
+.\" The above copyright notice and this permission notice shall be included
+.\" in all copies or substantial portions of the Software.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+.\" EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+.\" MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+.\" IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+.\" CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+.\" TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+.\" SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+.Dd June 24, 2026
+.Dt X11DND_XT_SET_DRAG_ICON 3
+.Os
+.Sh NAME
+.Nm x11dnd_xt_set_drag_icon
+.Nd set the drag icon configuration for Xt drag operations
+.Sh LIBRARY
+.Lb libx11dnd
+.Sh SYNOPSIS
+.In x11dnd_xt.h
+.Ft void
+.Fn x11dnd_xt_set_drag_icon "const X11DndDragIcon *icon"
+.Sh DESCRIPTION
+.Fn x11dnd_xt_set_drag_icon
+sets the drag icon configuration used for visual feedback during drag
+operations.
+Must be called before
+.Xr x11dnd_xt_start_drag 3 .
+.Pp
+If
+.Fa icon
+is
+.Dv NULL ,
+no icon window is created and drag tracking shows no visual cursor feedback
+beyond the default pointer.
+.Pp
+The
+.Vt X11DndDragIcon
+struct must have static or global lifetime.
+The library stores only the pointer, not a copy.
+Do NOT pass a stack-allocated struct.
+.Pp
+The library creates the icon window at drag start, moves it during the
+drag, and destroys it at drag end or cancel.
+The application must NOT create, move, or destroy the icon window manually.
+.Pp
+When
+.Dv X11DND_ICON_SHAPE_MASK
+is set in the
+.Fa flags
+field, the application must link against
+.Li -lXext
+for the XShape extension.
+.Sh EXAMPLES
+.Bd -literal
+static X11DndDragIcon drag_icon;
+drag_icon.bits      = my_icon_bits;
+drag_icon.mask_bits = my_icon_m_bits;
+drag_icon.width     = my_icon_width;
+drag_icon.height    = my_icon_height;
+drag_icon.hotspot_x = 12;
+drag_icon.hotspot_y = 12;
+drag_icon.fg_pixel  = BlackPixelOfScreen(XtScreen(shell));
+drag_icon.bg_pixel  = WhitePixelOfScreen(XtScreen(shell));
+drag_icon.flags     = X11DND_ICON_CANCEL_ESC | X11DND_ICON_SHAPE_MASK;
+
+x11dnd_xt_set_drag_icon(&drag_icon);
+.Ed
+.Sh SEE ALSO
+.Xr x11dnd_xt_start_drag 3 ,
+.Xr x11dnd_xt_cancel_drag 3 ,
+.Xr x11dnd 3
+.Sh AUTHORS
+.An alx@fastestcode.org
+.Sh LICENSE
+.Nm
+is distributed under the X/MIT license.
