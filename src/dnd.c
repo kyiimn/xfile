@@ -78,7 +78,6 @@ static Pixmap dnd_icon_pixmap = None;
 static Pixmap dnd_icon_mask = None;
 static int dnd_icon_accept = -1;
 static XtIntervalId dnd_icon_timer = 0;
-static Widget dnd_esc_shell = NULL;
 #define DND_ICON_WIDTH  48
 #define DND_ICON_HEIGHT 48
 #define DND_ICON_OFFSET 12
@@ -160,7 +159,6 @@ static void dnd_perform_operation(const char *src_dir, char **names,
 	unsigned int count, const char *dest_dir, unsigned char operation);
 static void dnd_status_clear_cb(XtPointer client_data, XtIntervalId *id);
 static void dnd_icon_track_cb(XtPointer client_data, XtIntervalId *id);
-static void dnd_esc_handler(Widget w, XtPointer client_data, XEvent *evt, Boolean *cont);
 
 
 
@@ -177,6 +175,7 @@ dnd_icon_track_cb(XtPointer client_data, XtIntervalId *id)
 	Window junk_root, junk_child;
 	int root_x, root_y, junk_x, junk_y;
 	unsigned int junk_mask;
+	char keys[32];
 
 	(void)client_data;
 	(void)id;
@@ -184,6 +183,15 @@ dnd_icon_track_cb(XtPointer client_data, XtIntervalId *id)
 	if(dnd_icon_win == None || dnd_icon_dpy == NULL) {
 		dnd_icon_timer = 0;
 		return;
+	}
+
+	XQueryKeymap(dnd_icon_dpy, keys);
+	{
+		KeyCode esc = XKeysymToKeycode(dnd_icon_dpy, XK_Escape);
+		if(esc != 0 && (keys[esc >> 3] & (1 << (esc & 7)))) {
+			dnd_cancel_drag();
+			return;
+		}
 	}
 
 	root = DefaultRootWindow(dnd_icon_dpy);
@@ -195,19 +203,6 @@ dnd_icon_track_cb(XtPointer client_data, XtIntervalId *id)
 
 	dnd_icon_timer = XtAppAddTimeOut(app_inst.context, 16,
 		dnd_icon_track_cb, NULL);
-}
-
-static void
-dnd_esc_handler(Widget w, XtPointer client_data, XEvent *evt, Boolean *cont)
-{
-	(void)w;
-	(void)client_data;
-	(void)cont;
-
-	if(evt->type == KeyPress
-		&& XLookupKeysym(&evt->xkey, 0) == XK_Escape) {
-		dnd_cancel_drag();
-	}
 }
 
 static Pixmap
@@ -344,16 +339,6 @@ dnd_on_drag_end(X11DndSourceSession *sess, Bool completed)
 	if(dnd_icon_timer != 0) {
 		XtRemoveTimeOut(dnd_icon_timer);
 		dnd_icon_timer = 0;
-	}
-
-	if(dnd_esc_shell != NULL) {
-		Display *dpy = XtDisplay(dnd_esc_shell);
-		KeyCode esc = XKeysymToKeycode(dpy, XK_Escape);
-		Window win = XtWindow(dnd_esc_shell);
-		XUngrabKey(dpy, esc, AnyModifier, win);
-		XtRemoveEventHandler(dnd_esc_shell, KeyPressMask, True,
-			dnd_esc_handler, NULL);
-		dnd_esc_shell = NULL;
 	}
 
 	if(src_widget != NULL) {
@@ -1845,25 +1830,6 @@ dnd_start_drag(Widget w, XEvent *event)
 	/* Install BadAtom suppressor for Motif interop */
 	dnd_active = True;
 	dnd_prev_xerr = XSetErrorHandler(dnd_xerror_handler);
-
-	/* Grab Escape key so it works during the implicit pointer grab.
-	 * XGrabKey on the shell window ensures the key event is delivered
-	 * there regardless of pointer grab state. */
-	{
-		Widget shell = w;
-		while(shell != NULL && !XtIsShell(shell))
-			shell = XtParent(shell);
-		if(shell != NULL && XtIsRealized(shell)) {
-			Display *dpy = XtDisplay(shell);
-			KeyCode esc = XKeysymToKeycode(dpy, XK_Escape);
-			Window win = XtWindow(shell);
-			XGrabKey(dpy, esc, AnyModifier, win, False,
-				GrabModeAsync, GrabModeAsync);
-			XtAddEventHandler(shell, KeyPressMask, True,
-				dnd_esc_handler, NULL);
-			dnd_esc_shell = shell;
-		}
-	}
 
 	/* Set dnd_source_widget BEFORE starting the drag, because the
 	 * on_drag_begin callback runs inside x11dnd_xt_start_drag and
